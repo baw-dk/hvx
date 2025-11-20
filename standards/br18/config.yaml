@@ -9,46 +9,194 @@ applicability:
   countries: ["DK"]
   regions: ["Denmark"]
   continents: ["Europe"]
-  building_types: ["office", "school", "classroom", "meeting_room", "residential", "industrial", "retail"]
+  building_types: ["office", "school", "classroom", "meeting_room", "daycare", "residential", "industrial", "retail"]
   seasons: ["all_year"]
 
 required_inputs:
   temperature: true
   co2: true
   ventilation_rate: false
+  bathroom_exhaust_flow: false
+  wc_utility_exhaust_flow: false
+  kitchen_exhaust_flow: false
+  kitchen_hood_flow: false
 
 allow_partial_analysis: false
 
 # BR18 Indoor Climate Rules
 rules:
-  - id: "br18_temp_workspace"
-    name: "Temperature for Workspaces"
+  # Thermal comfort (BR18 Termisk indeklima vejledning kap. 1.0)
+  - id: "br18_nonres_temp_26"
+    name: "Non-residential operative temperature ≤26°C"
     metric: "temperature"
-    operator: "between"
-    lower_bound: 20.0
-    upper_bound: 25.0
+    operator: "<="
+    target_value: 26.0
     unit: "°C"
     tolerance_hours: 100
     applies_during: "occupied"
-    season: "all_year"
-    description: "Work spaces should typically stay between 20-25°C depending on the type of work"
+    season: "summer"
+    applicable_building_types: ["office", "school", "classroom", "meeting_room", "daycare", "industrial", "retail"]
+    source_section: "BR18 vejledning kap. 1.0"
+    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    description: "Andre bygninger end boliger skal dokumentere, at operative temperaturer over 26 °C kun forekommer op til 100 brugstimer årligt."
 
-  - id: "br18_co2_max"
-    name: "Maximum CO2 Concentration"
+  - id: "br18_nonres_temp_27"
+    name: "Non-residential operative temperature ≤27°C"
+    metric: "temperature"
+    operator: "<="
+    target_value: 27.0
+    unit: "°C"
+    tolerance_hours: 25
+    applies_during: "occupied"
+    season: "summer"
+    applicable_building_types: ["office", "school", "classroom", "meeting_room", "daycare", "industrial", "retail"]
+    source_section: "BR18 vejledning kap. 1.0"
+    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    description: "Operative temperaturer over 27 °C må højst forekomme i 25 timer pr. år i brugstiden for ikke-beboelsesbygninger."
+
+  - id: "br18_res_temp_27"
+    name: "Residential operative temperature ≤27°C"
+    metric: "temperature"
+    operator: "<="
+    target_value: 27.0
+    unit: "°C"
+    tolerance_hours: 100
+    applies_during: "occupied"
+    season: "summer"
+    applicable_building_types: ["residential"]
+    source_section: "BR18 vejledning kap. 1.0"
+    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    description: "Boliger med mulighed for udluftning bør højst have 100 brugstimer pr. år med operative temperaturer over 27 °C."
+
+  - id: "br18_res_temp_28"
+    name: "Residential operative temperature ≤28°C"
+    metric: "temperature"
+    operator: "<="
+    target_value: 28.0
+    unit: "°C"
+    tolerance_hours: 25
+    applies_during: "occupied"
+    season: "summer"
+    applicable_building_types: ["residential"]
+    source_section: "BR18 vejledning kap. 1.0"
+    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    description: "Der må højst forekomme 25 brugstimer pr. år over 28 °C i boligens rum, når udluftning er mulig."
+
+  # Residential ventilation (BR18 § 443)
+  - id: "br18_residential_air_supply"
+    name: "Residential outdoor air supply (occupied)"
+    metric: "ventilation_rate"
+    operator: ">="
+    target_value: 0.30
+    unit: "L/s per m2"
+    applies_during: "occupied"
+    applicable_building_types: ["residential"]
+    season: "all_year"
+    source_section: "BR18 § 443, stk. 1"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/443_446/#7e3ed2f3-9f5b-47e8-b41c-723a75ec3009"
+    description: "Beboelsesrum og boligen som helhed skal have en udelufttilførsel på mindst 0,30 L/s pr. m2 opvarmet etageareal under normal brug."
+
+  - id: "br18_residential_reduced_air_supply"
+    name: "Residential reduced air supply (allowed inactivity)"
+    metric: "ventilation_rate"
+    operator: ">="
+    target_value: 0.15
+    unit: "L/s per m2"
+    applies_during: "unoccupied"
+    applicable_building_types: ["residential"]
+    season: "all_year"
+    source_section: "BR18 § 443, stk. 1"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/443_446/#7e3ed2f3-9f5b-47e8-b41c-723a75ec3009"
+    description: "Når ventilationen kan dokumenteres behovsstyret, kan lufttilførslen reduceres til 0,15 L/s pr. m2 i længere perioder, hvor boligen ikke er i anvendelse."
+
+  - id: "br18_residential_bathroom_exhaust"
+    name: "Bathroom exhaust airflow"
+    metric: "bathroom_exhaust_flow"
+    operator: ">="
+    target_value: 15.0
+    unit: "L/s"
+    applies_during: "occupied"
+    applicable_building_types: ["residential"]
+    source_section: "BR18 § 443, stk. 5"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/443_446/#7e3ed2f3-9f5b-47e8-b41c-723a75ec3009"
+    description: "Bade- og wc-rum i boliger skal kunne udsuge mindst 15 L/s for at fjerne fugt og forureninger."
+
+  - id: "br18_residential_wc_utility_exhaust"
+    name: "WC and utility exhaust airflow"
+    metric: "wc_utility_exhaust_flow"
+    operator: ">="
+    target_value: 10.0
+    unit: "L/s"
+    applies_during: "occupied"
+    applicable_building_types: ["residential"]
+    source_section: "BR18 § 443, stk. 5"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/443_446/#7e3ed2f3-9f5b-47e8-b41c-723a75ec3009"
+    description: "WC-rum uden bad og bryggers i boliger skal kunne udsuge mindst 10 L/s."
+
+  - id: "br18_residential_kitchen_exhaust"
+    name: "Residential kitchen exhaust airflow"
+    metric: "kitchen_exhaust_flow"
+    operator: ">="
+    target_value: 20.0
+    unit: "L/s"
+    applies_during: "occupied"
+    applicable_building_types: ["residential"]
+    source_section: "BR18 § 443, stk. 5"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/443_446/#7e3ed2f3-9f5b-47e8-b41c-723a75ec3009"
+    description: "Køkkener i boliger skal have udsugning på mindst 20 L/s for grundluftsskiftet."
+
+  - id: "br18_kitchen_hood_flow"
+    name: "Residential hood capture airflow"
+    metric: "kitchen_hood_flow"
+    operator: ">="
+    target_value: 120.0
+    unit: "L/s"
+    applies_during: "cooking"
+    applicable_building_types: ["residential"]
+    source_section: "BR18 § 443, stk. 3-4"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/443_446/#7e3ed2f3-9f5b-47e8-b41c-723a75ec3009"
+    description: "Emhætter skal have mekanisk udsugning med afkast til det fri og en luftstrøm på mindst 120 L/s, med mulighed for reduktion via dokumenterede korrektionsfaktorer eller 75 % emopfangsevne."
+
+  # Schools, classrooms and day-care (BR18 § 447)
+  - id: "br18_school_co2_max"
+    name: "Educational spaces CO2 limit"
     metric: "co2"
     operator: "<="
     target_value: 1000
     unit: "ppm"
     tolerance_percentage: 5
     applies_during: "occupied"
+    applicable_building_types: ["school", "classroom", "meeting_room", "daycare"]
     season: "all_year"
-    description: "CO2 content in indoor air must not exceed 1000 ppm for extended periods"
+    source_section: "BR18 § 447, stk. 2"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/447/#dcb71b0d-4d4f-404f-aa62-26950e0c0685"
+    description: "Opholdsrum i daginstitutioner og undervisningsrum skal dimensioneres, så CO2-indholdet ikke overstiger 1.000 ppm i de dimensionerende perioder."
+
+  - id: "br18_school_min_air_supply"
+    name: "Educational spaces minimum air supply"
+    metric: "ventilation_rate"
+    operator: ">="
+    target_value: 0.35
+    unit: "L/s per m2"
+    applies_during: "occupied"
+    applicable_building_types: ["school", "classroom", "meeting_room", "daycare"]
+    season: "all_year"
+    source_section: "BR18 § 447, stk. 3"
+    source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/447/#dcb71b0d-4d4f-404f-aa62-26950e0c0685"
+    description: "Ved behovsstyret ventilation må luftmængden i brugstiden ikke komme under 0,35 L/s pr. m2 etageareal i undervisningsrum og daginstitutioners opholdsrum."
 
 # Ventilation requirements (informational)
 ventilation_requirements:
-  per_person: 10.0  # L/s per person
-  per_area: 0.35    # L/s per m² floor area
-  description: "Ventilation rates should be set at 10 L/s/person plus 0.35 L/s/m² floor area"
+  residential:
+    base_outdoor_air_l_s_m2: 0.30
+    reduced_outdoor_air_l_s_m2: 0.15
+    bathroom_exhaust_l_s: 15.0
+    wc_utility_exhaust_l_s: 10.0
+    kitchen_exhaust_l_s: 20.0
+    kitchen_hood_l_s: 120.0
+  education:
+    max_co2_ppm: 1000
+    min_air_supply_l_s_m2: 0.35
 
 # Additional guidelines
 guidelines:

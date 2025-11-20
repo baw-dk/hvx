@@ -15,6 +15,11 @@ scipy>=1.16.2
 pythermalcomfort>=2.8.0
 streamlit>=1.32.0
 holidays>=0.42
+scikit-learn>=1.7.2
+
+# API backend
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
 
 # Semantic web and building ontology
 brickschema>=0.6.0

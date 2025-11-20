@@ -101,6 +101,33 @@ export default function ZipFlowGenerator({
     }
   };
 
+  /**
+   * Intelligent folder structure detection system
+   *
+   * This function automatically detects the hierarchy from three common patterns:
+   *
+   * Pattern 1: Explicit floor folders (e.g., building_a)
+   *   building_a/level_1/office_1.csv
+   *   building_a/level_2/meeting_room.csv
+   *   building_a/energy_data.csv (building-level sensor)
+   *
+   * Pattern 2: Floor info in CSV filenames (e.g., building_b)
+   *   building_b/first_floor_office.csv
+   *   building_b/ground_floor_shop_1.csv
+   *   building_b/basement_server_room.csv
+   *   building_b/energy_data.csv (building-level sensor)
+   *
+   * Pattern 3: Flat structure with no floors (e.g., building_c)
+   *   building_c/staff_room.csv
+   *   building_c/classroom_1.csv
+   *   building_c/energy_data.csv (building-level sensor)
+   *
+   * Detection logic:
+   * - Detects floor keywords: "floor", "level", "storey", "basement", etc.
+   * - Recognizes building-level sensors: "energy_data", "climate_data", etc.
+   * - Extracts floor from filename patterns: "first_floor_", "ground_floor_", etc.
+   * - Creates virtual "default_floor" only when no floor info is available
+   */
   const buildFolderStructure = async (files: ParsedFile[]): Promise<any> => {
     // Structure: Portfolio -> Buildings -> Floors -> Rooms -> Sensors
     const portfolio: any = {
@@ -109,9 +136,98 @@ export default function ZipFlowGenerator({
       buildings: new Map<string, any>(),
     };
 
+    // Detect the common root folder (portfolio folder) if it exists
+    const allPaths = files.map(f => f.name.split('/').filter(p => p && !p.startsWith('.') && !p.startsWith('__MACOSX')));
+    let rootOffset = 0;
+
+    // If all files share a common root folder that contains multiple subfolders, skip it
+    if (allPaths.length > 0) {
+      const firstLevelFolders = new Set(allPaths.map(p => p[0]));
+      // If there's only one first-level folder, it's likely the portfolio wrapper folder
+      if (firstLevelFolders.size === 1 && allPaths.some(p => p.length > 2)) {
+        rootOffset = 1; // Skip the portfolio wrapper folder
+      }
+    }
+
+    // Helper function to detect if a folder name indicates a floor
+    const isFloorFolder = (folderName: string): boolean => {
+      const lower = folderName.toLowerCase();
+      return lower.includes('floor') ||
+             lower.includes('level') ||
+             lower.includes('storey') ||
+             lower.includes('etage') ||
+             /^[0-9]+(st|nd|rd|th)$/i.test(lower);
+    };
+
+    // Helper function to extract floor info from filename
+    const extractFloorFromFilename = (fileName: string): { floor: string; remainder: string } | null => {
+      const lower = fileName.toLowerCase();
+
+      // Patterns: first_floor_office, ground_floor_shop, basement_room, 2nd_floor_office
+      const patterns = [
+        /^(first_floor|ground_floor|second_floor|third_floor|fourth_floor|fifth_floor)_(.+)$/i,
+        /^(basement|attic|rooftop|penthouse)_(.+)$/i,
+        /^(level_\d+)_(.+)$/i,
+        /^(\d+(?:st|nd|rd|th)_floor)_(.+)$/i,
+      ];
+
+      for (const pattern of patterns) {
+        const match = fileName.match(pattern);
+        if (match) {
+          return { floor: match[1], remainder: match[2] };
+        }
+      }
+
+      return null;
+    };
+
+    // Helper function to check if a file is likely a building-level sensor
+    const isBuildingLevelSensor = (fileName: string): boolean => {
+      const lower = fileName.toLowerCase();
+      return lower.includes('energy_data') ||
+             lower.includes('climate_data') ||
+             lower.includes('weather') ||
+             lower.includes('building_total') ||
+             lower.includes('main_meter');
+    };
+
+    // Helper function to detect sensor type from CSV column names
+    const detectSensorTypeFromColumns = (columns: string[]): { type: SensorType } | null => {
+      const hasColumn = (keywords: string[]) =>
+        columns.some(col => keywords.some(kw => col.includes(kw)));
+
+      // Check for indoor climate data (temperature, humidity, CO2, etc.)
+      if (hasColumn(['temp', 'humidity', 'rh', 'co2', 'light', 'lux', 'voc', 'pm'])) {
+        return { type: 'indoor_climate' };
+      }
+
+      // Check for energy/power data
+      if (hasColumn(['energy', 'power', 'kwh', 'watt', 'electricity'])) {
+        return { type: 'energy_consumption' };
+      }
+
+      // Check for occupancy data
+      if (hasColumn(['occupancy', 'occupied', 'presence', 'people', 'count'])) {
+        return { type: 'occupancy' };
+      }
+
+      // Check for weather data
+      if (hasColumn(['outdoor', 'weather', 'wind', 'rain', 'solar'])) {
+        return { type: 'weather' };
+      }
+
+      // Check for water data
+      if (hasColumn(['water', 'flow', 'liters'])) {
+        return { type: 'water' };
+      }
+
+      // Default to indoor_climate for room sensor files
+      return { type: 'indoor_climate' };
+    };
+
     // Organize files by folder structure
     for (const file of files) {
-      const pathParts = file.name.split('/').filter(p => p && !p.startsWith('.') && !p.startsWith('__MACOSX'));
+      const pathParts = file.name.split('/').filter(p => p && !p.startsWith('.') && !p.startsWith('__MACOSX')).slice(rootOffset);
 
       if (pathParts.length === 0) continue;
 
@@ -170,7 +286,15 @@ export default function ZipFlowGenerator({
 
       // Handle CSV sensor files
       if (file.type === 'csv') {
-        const sensorInfo = parseSensorFromFilename(file.name);
+        let sensorInfo = parseSensorFromFilename(file.name);
+
+        // If filename doesn't indicate sensor type, detect from CSV columns
+        if (!sensorInfo && file.content.length > 0) {
+          const columns = Object.keys(file.content[0]).map(c => c.toLowerCase());
+          sensorInfo = detectSensorTypeFromColumns(columns);
+        }
+
+        // Skip if still can't determine sensor type
         if (!sensorInfo) continue;
 
         const csvColumns = file.content.length > 0 ? Object.keys(file.content[0]) : [];
@@ -201,31 +325,100 @@ export default function ZipFlowGenerator({
 
         const building = portfolio.buildings.get(buildingFolder);
 
+        // Smart detection based on path depth and naming patterns
         if (pathParts.length === 2) {
-          // Building-level sensor (e.g., building_a/climate_data.csv)
-          building.sensors.push(sensor);
-        } else if (pathParts.length === 3) {
-          // Floor-level sensor or room
-          const floorOrRoomFolder = pathParts[1];
+          // Case 1: building/file.csv - could be building sensor OR room with floor in filename
+          const fileName = pathParts[1].replace('.csv', '');
 
-          // Check if this looks like a floor or a room
-          if (floorOrRoomFolder.includes('floor') || floorOrRoomFolder.includes('level')) {
-            // It's a floor-level sensor
-            if (!building.floors.has(floorOrRoomFolder)) {
-              building.floors.set(floorOrRoomFolder, {
-                name: formatName(floorOrRoomFolder),
-                folder: floorOrRoomFolder,
+          // Check if it's a building-level sensor
+          if (isBuildingLevelSensor(fileName)) {
+            building.sensors.push(sensor);
+          } else {
+            // Try to extract floor info from filename
+            const floorInfo = extractFloorFromFilename(fileName);
+
+            if (floorInfo) {
+              // Pattern: building/first_floor_office.csv
+              const floorName = floorInfo.floor;
+              const roomName = floorInfo.remainder;
+
+              if (!building.floors.has(floorName)) {
+                building.floors.set(floorName, {
+                  name: formatName(floorName),
+                  folder: floorName,
+                  metadata: {},
+                  rooms: new Map(),
+                  sensors: [],
+                });
+              }
+
+              const floor = building.floors.get(floorName);
+              if (!floor.rooms.has(roomName)) {
+                floor.rooms.set(roomName, {
+                  name: formatName(roomName),
+                  folder: roomName,
+                  metadata: {},
+                  sensors: [],
+                });
+              }
+              floor.rooms.get(roomName).sensors.push(sensor);
+            } else {
+              // No floor info - treat as room in default floor
+              if (!building.floors.has('default_floor')) {
+                building.floors.set('default_floor', {
+                  name: 'Default Floor',
+                  folder: 'default_floor',
+                  metadata: {},
+                  rooms: new Map(),
+                  sensors: [],
+                });
+              }
+
+              const floor = building.floors.get('default_floor');
+              if (!floor.rooms.has(fileName)) {
+                floor.rooms.set(fileName, {
+                  name: formatName(fileName),
+                  folder: fileName,
+                  metadata: {},
+                  sensors: [],
+                });
+              }
+              floor.rooms.get(fileName).sensors.push(sensor);
+            }
+          }
+        } else if (pathParts.length === 3) {
+          // Case 2: building/subfolder/file.csv - could be floor/room OR just building/room structure
+          const middleFolder = pathParts[1];
+          const fileName = pathParts[2].replace('.csv', '');
+
+          // Check if middle folder is a floor
+          if (isFloorFolder(middleFolder)) {
+            // Pattern: building/level_1/office.csv - it's a floor with rooms
+            if (!building.floors.has(middleFolder)) {
+              building.floors.set(middleFolder, {
+                name: formatName(middleFolder),
+                folder: middleFolder,
                 metadata: {},
                 rooms: new Map(),
                 sensors: [],
               });
             }
-            building.floors.get(floorOrRoomFolder).sensors.push(sensor);
+
+            const floor = building.floors.get(middleFolder);
+            if (!floor.rooms.has(fileName)) {
+              floor.rooms.set(fileName, {
+                name: formatName(fileName),
+                folder: fileName,
+                metadata: {},
+                sensors: [],
+              });
+            }
+            floor.rooms.get(fileName).sensors.push(sensor);
           } else {
-            // It's a room-level sensor (flat structure: building/room/sensor.csv)
+            // Pattern: building/room/sensor.csv - treat middle folder as room in default floor
             if (!building.floors.has('default_floor')) {
               building.floors.set('default_floor', {
-                name: 'Ground Floor',
+                name: 'Default Floor',
                 folder: 'default_floor',
                 metadata: {},
                 rooms: new Map(),
@@ -234,18 +427,19 @@ export default function ZipFlowGenerator({
             }
 
             const floor = building.floors.get('default_floor');
-            if (!floor.rooms.has(floorOrRoomFolder)) {
-              floor.rooms.set(floorOrRoomFolder, {
-                name: formatName(floorOrRoomFolder),
-                folder: floorOrRoomFolder,
+            // Use middle folder as room name (ignore the actual filename as it's the sensor CSV)
+            if (!floor.rooms.has(middleFolder)) {
+              floor.rooms.set(middleFolder, {
+                name: formatName(middleFolder),
+                folder: middleFolder,
                 metadata: {},
                 sensors: [],
               });
             }
-            floor.rooms.get(floorOrRoomFolder).sensors.push(sensor);
+            floor.rooms.get(middleFolder).sensors.push(sensor);
           }
         } else if (pathParts.length >= 4) {
-          // Floor -> Room -> Sensor
+          // Case 3: building/floor/room/file.csv - clear hierarchy
           const floorFolder = pathParts[1];
           const roomFolder = pathParts[2];
 
@@ -278,10 +472,16 @@ export default function ZipFlowGenerator({
     return {
       name: portfolio.name,
       metadata: portfolio.metadata,
-      buildings: Array.from(portfolio.buildings.values()).map(building => ({
-        ...building,
-        floors: Array.from(building.floors.values()).map(floor => ({
-          ...floor,
+      buildings: Array.from(portfolio.buildings.values()).map((building: any) => ({
+        name: building.name,
+        folder: building.folder,
+        metadata: building.metadata,
+        sensors: building.sensors,
+        floors: Array.from(building.floors.values()).map((floor: any) => ({
+          name: floor.name,
+          folder: floor.folder,
+          metadata: floor.metadata,
+          sensors: floor.sensors,
           rooms: Array.from(floor.rooms.values()),
         })),
       })),

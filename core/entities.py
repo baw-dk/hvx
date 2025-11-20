@@ -357,6 +357,78 @@ class Portfolio(SpatialEntity):
         self.computed_metrics['portfolio_standards'] = results
         return results
 
+    def compute_simulations(
+        self,
+        building_lookup: Optional[Callable[[str], Any]] = None,
+        floor_lookup: Optional[Callable[[str], Any]] = None,
+        room_lookup: Optional[Callable[[str], Any]] = None,
+        force_recompute: bool = False,
+        window_area_m2: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute simulations for all buildings in this portfolio and aggregate results.
+
+        Args:
+            building_lookup: Function to retrieve Building objects by ID
+            floor_lookup: Function to retrieve Floor objects by ID (for building aggregation)
+            room_lookup: Function to retrieve Room objects by ID (for building aggregation)
+            force_recompute: If True, recompute even if cached
+            window_area_m2: Window area for solar gain calculations
+
+        Returns:
+            Dictionary with aggregated simulation results
+        """
+        if not force_recompute and 'portfolio_simulations' in self.computed_metrics:
+            return self.computed_metrics['portfolio_simulations']
+
+        results = {}
+
+        if building_lookup is None or not self.building_ids:
+            self.computed_metrics['portfolio_simulations'] = results
+            return results
+
+        # Compute simulations for each building
+        for building_id in self.building_ids:
+            building = building_lookup(building_id)
+            if building and hasattr(building, 'compute_simulations'):
+                try:
+                    building.compute_simulations(
+                        room_lookup=room_lookup,
+                        floor_lookup=floor_lookup,
+                        force_recompute=force_recompute,
+                        window_area_m2=window_area_m2,
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not compute simulations for building {building_id}: {e}")
+
+        # Aggregate building simulation results
+        building_sim_results = []
+        for building_id in self.building_ids:
+            building = building_lookup(building_id)
+            if building and 'building_simulations' in building.computed_metrics:
+                building_sim_results.append(building.computed_metrics['building_simulations'])
+
+        if building_sim_results:
+            results['building_count'] = len(building_sim_results)
+            results['buildings_with_simulations'] = len([b for b in building_sim_results if b])
+
+            # Aggregate counts across buildings
+            total_room_count = sum(b.get('room_count', 0) for b in building_sim_results)
+            total_rooms_with_sims = sum(b.get('rooms_with_simulations', 0) for b in building_sim_results)
+
+            results['total_room_count'] = total_room_count
+            results['total_rooms_with_simulations'] = total_rooms_with_sims
+
+            # Aggregate simulation type counts
+            for sim_type in ['occupancy', 'ventilation', 'correlations', 'scenarios', 'recommendations']:
+                type_count = sum(b.get(f'{sim_type}_count', 0) for b in building_sim_results)
+                if type_count > 0:
+                    results[f'total_{sim_type}_count'] = type_count
+
+        # Cache results
+        self.computed_metrics['portfolio_simulations'] = results
+        return results
+
     def get_summary(self) -> Dict[str, Any]:
         """Get summary information about this portfolio."""
         return {
@@ -1121,6 +1193,85 @@ class Building(SpatialEntity):
         self.computed_metrics['building_standards'] = results
         return results
 
+    def compute_simulations(
+        self,
+        room_lookup: Optional[Callable[[str], Any]] = None,
+        floor_lookup: Optional[Callable[[str], Any]] = None,
+        force_recompute: bool = False,
+        window_area_m2: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute simulations for all rooms in this building and aggregate results.
+
+        Args:
+            room_lookup: Function to retrieve Room objects by ID
+            floor_lookup: Function to retrieve Floor objects by ID (optional)
+            force_recompute: If True, recompute even if cached
+            window_area_m2: Window area for solar gain calculations
+
+        Returns:
+            Dictionary with aggregated simulation results
+        """
+        if not force_recompute and 'building_simulations' in self.computed_metrics:
+            return self.computed_metrics['building_simulations']
+
+        results = {}
+
+        if room_lookup is None:
+            self.computed_metrics['building_simulations'] = results
+            return results
+
+        # Collect all room IDs from both floors and direct rooms
+        all_room_ids = []
+
+        # Get rooms from floors
+        if floor_lookup and self.floor_ids:
+            for floor_id in self.floor_ids:
+                floor = floor_lookup(floor_id)
+                if floor and hasattr(floor, 'room_ids'):
+                    all_room_ids.extend(floor.room_ids)
+
+        # Get direct rooms (not in floors)
+        if self.room_ids:
+            all_room_ids.extend(self.room_ids)
+
+        if not all_room_ids:
+            self.computed_metrics['building_simulations'] = results
+            return results
+
+        # Compute simulations for each room
+        for room_id in all_room_ids:
+            room = room_lookup(room_id)
+            if room and hasattr(room, 'compute_simulations'):
+                try:
+                    room.compute_simulations(
+                        force_recompute=force_recompute,
+                        window_area_m2=window_area_m2,
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not compute simulations for room {room_id}: {e}")
+
+        # Aggregate room simulation results
+        room_sim_results = []
+        for room_id in all_room_ids:
+            room = room_lookup(room_id)
+            if room and 'simulation_results' in room.computed_metrics:
+                room_sim_results.append(room.computed_metrics['simulation_results'])
+
+        if room_sim_results:
+            results['room_count'] = len(room_sim_results)
+            results['rooms_with_simulations'] = len([r for r in room_sim_results if r])
+
+            # Aggregate specific simulation types
+            for sim_type in ['occupancy', 'ventilation', 'correlations', 'scenarios', 'recommendations']:
+                type_results = [r.get(sim_type) for r in room_sim_results if r.get(sim_type)]
+                if type_results:
+                    results[f'{sim_type}_count'] = len(type_results)
+
+        # Cache results
+        self.computed_metrics['building_simulations'] = results
+        return results
+
     def get_summary(self) -> Dict[str, Any]:
         """Get summary information about this building."""
         return {
@@ -1477,6 +1628,65 @@ class Floor(SpatialEntity):
         
         # Cache results
         self.computed_metrics['floor_standards'] = results
+        return results
+
+    def compute_simulations(
+        self,
+        room_lookup: Optional[Callable[[str], Any]] = None,
+        force_recompute: bool = False,
+        window_area_m2: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute simulations for all rooms on this floor and aggregate results.
+
+        Args:
+            room_lookup: Function to retrieve Room objects by ID
+            force_recompute: If True, recompute even if cached
+            window_area_m2: Window area for solar gain calculations
+
+        Returns:
+            Dictionary with aggregated simulation results
+        """
+        if not force_recompute and 'floor_simulations' in self.computed_metrics:
+            return self.computed_metrics['floor_simulations']
+
+        results = {}
+
+        if room_lookup is None or not self.child_ids:
+            self.computed_metrics['floor_simulations'] = results
+            return results
+
+        # Compute simulations for each room
+        for room_id in self.child_ids:
+            room = room_lookup(room_id)
+            if room and hasattr(room, 'compute_simulations'):
+                try:
+                    room.compute_simulations(
+                        force_recompute=force_recompute,
+                        window_area_m2=window_area_m2,
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not compute simulations for room {room_id}: {e}")
+
+        # Aggregate room simulation results
+        room_sim_results = []
+        for room_id in self.child_ids:
+            room = room_lookup(room_id)
+            if room and 'simulation_results' in room.computed_metrics:
+                room_sim_results.append(room.computed_metrics['simulation_results'])
+
+        if room_sim_results:
+            results['room_count'] = len(room_sim_results)
+            results['rooms_with_simulations'] = len([r for r in room_sim_results if r])
+
+            # Aggregate specific simulation types
+            for sim_type in ['occupancy', 'ventilation', 'correlations', 'scenarios', 'recommendations']:
+                type_results = [r.get(sim_type) for r in room_sim_results if r.get(sim_type)]
+                if type_results:
+                    results[f'{sim_type}_count'] = len(type_results)
+
+        # Cache results
+        self.computed_metrics['floor_simulations'] = results
         return results
 
     def get_summary(self) -> Dict[str, Any]:
@@ -1903,77 +2113,151 @@ class Room(SpatialEntity):
     def compute_simulations(
         self,
         force_recompute: bool = False,
+        window_area_m2: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Compute all applicable simulations for this room.
-        
+
         Automatically determines which simulations to run based on:
         - Available sensor data
         - Entity type
-        
+
         Args:
             force_recompute: If True, recompute even if cached
-        
+            window_area_m2: Window area for solar gain calculations
+
         Returns:
             Dictionary with results from all applicable simulations
         """
         from dataclasses import asdict
-        
+
         import pandas as pd
-        
-        from .standards_registry import get_registry
-        
+        from simulations.registry import get_simulations_registry
+
         if not force_recompute and 'simulation_results' in self.computed_metrics:
             return self.computed_metrics['simulation_results']
-        
+
         results = {}
-        
+
         if not self.has_data:
             self.computed_metrics['simulation_results'] = results
             return results
-        
-        # Get the registry
-        registry = get_registry()
-        
+
+        # Get the simulations registry
+        registry = get_simulations_registry()
+
         # Get applicable simulations
         applicable_simulations = registry.get_applicable_simulations(
-            entity_type=self.type,
+            entity_type=self.type.value,
             available_metrics=set(self.available_metrics),
         )
-        
+
+        # Build DataFrame for simulations that need it
+        df = None
+        try:
+            if self.timestamps and self.timeseries_data:
+                # Use the actual length of each metric's data
+                df_data = {}
+                for metric, values in self.timeseries_data.items():
+                    if values and len(values) > 0:
+                        # Create timestamps for this metric's length
+                        if len(self.timestamps) >= len(values):
+                            metric_timestamps = self.timestamps[:len(values)]
+                        else:
+                            # If we have more values than timestamps, use what we have
+                            metric_timestamps = self.timestamps
+                            values = values[:len(self.timestamps)]
+
+                        df_data[metric] = pd.Series(values, index=pd.to_datetime(metric_timestamps))
+
+                if df_data:
+                    df = pd.DataFrame(df_data)
+        except Exception as e:
+            print(f"Warning: Could not build DataFrame for {self.name}: {e}")
+
+        # Store raw objects temporarily for inter-simulation dependencies
+        raw_results = {}
+
         # Run each applicable simulation
         for simulation_config in applicable_simulations:
             try:
-                # Load the simulation class
-                simulation_class = registry.load_simulation_class(simulation_config.module_path)
-                simulator = simulation_class()
-                
-                # Prepare data based on simulation type
+                # Load the model class
+                model_class = registry.load_model_class(simulation_config.module_path, simulation_config.model_class)
+
+                # Run simulation based on type
                 if simulation_config.id == 'occupancy':
-                    # Occupancy simulation needs CO2 as pandas Series
-                    if 'co2' in self.timeseries_data and self.timestamps:
-                        idx = pd.to_datetime(self.timestamps)
-                        co2_series = pd.Series(self.timeseries_data['co2'], index=idx)
-                        
-                        occupancy_result = simulator.detect_occupancy(co2_series)
-                        results['occupancy'] = asdict(occupancy_result)
-                        
-                        # Store in metadata for backward compatibility
-                        self.metadata['occupancy_simulation'] = asdict(occupancy_result)
-                
+                    if df is not None and 'co2' in df.columns:
+                        simulator = model_class()
+                        occupancy_result = simulator.detect_occupancy(df['co2'])
+                        raw_results['occupancy'] = occupancy_result
+                        results['occupancy'] = asdict(occupancy_result) if hasattr(occupancy_result, '__dataclass_fields__') else str(occupancy_result)
+
                 elif simulation_config.id == 'ventilation':
-                    # Ventilation simulation needs CO2
-                    if 'co2' in self.timeseries_data:
-                        # Implementation depends on VentilationCalculator interface
-                        # For now, skip if not implemented
-                        pass
-                
+                    if df is not None and 'co2' in df.columns:
+                        simulator = model_class()
+                        ventilation_result = simulator.estimate_from_co2_decay(df['co2'])
+                        if ventilation_result:
+                            raw_results['ventilation'] = ventilation_result
+                            results['ventilation'] = asdict(ventilation_result) if hasattr(ventilation_result, '__dataclass_fields__') else {
+                                'ach': float(ventilation_result.ach) if hasattr(ventilation_result, 'ach') else None,
+                                'outdoor_co2': float(ventilation_result.outdoor_co2) if hasattr(ventilation_result, 'outdoor_co2') else None,
+                            }
+
+                elif simulation_config.id == 'correlations':
+                    if df is not None and 'temperature' in df.columns:
+                        simulator = model_class(
+                            temperature_band=(20.0, 24.0),
+                            enable_seasonal_analysis=True,
+                            enable_solar_analysis=True,
+                            window_area_m2=window_area_m2 or 15.0,
+                        )
+                        correlations_result = simulator.compute(df, window_area_m2=window_area_m2 or 15.0)
+                        raw_results['correlations'] = correlations_result
+                        results['correlations'] = correlations_result.as_dict() if hasattr(correlations_result, 'as_dict') else str(correlations_result)
+
+                elif simulation_config.id == 'scenarios':
+                    if df is not None and 'temperature' in df.columns:
+                        simulator = model_class()
+                        # Get ventilation result object (not dict)
+                        vent_result = raw_results.get('ventilation')
+                        scenarios_result = simulator.estimate_impacts(df, vent_result)
+                        raw_results['scenarios'] = scenarios_result
+                        results['scenarios'] = scenarios_result.as_dict() if hasattr(scenarios_result, 'as_dict') else str(scenarios_result)
+
+                elif simulation_config.id == 'recommendations':
+                    # Recommendations use other simulation results
+                    simulator = model_class()
+
+                    # Prepare compliance data
+                    compliance = {}
+                    if 'standards_results' in self.computed_metrics:
+                        for standard_name, std_result in self.computed_metrics['standards_results'].items():
+                            if isinstance(std_result, dict):
+                                if 'overall_pass' in std_result:
+                                    compliance[standard_name] = std_result.get('overall_pass', False)
+
+                    # Get raw simulation result objects
+                    correlations = raw_results.get('correlations')
+                    ventilation = raw_results.get('ventilation')
+                    scenarios = raw_results.get('scenarios')
+
+                    recommendations = simulator.generate(
+                        room_name=self.name,
+                        compliance=compliance,
+                        correlations=correlations,
+                        ventilation_result=ventilation,
+                        scenarios=scenarios,
+                    )
+
+                    results['recommendations'] = [
+                        rec.as_dict() if hasattr(rec, 'as_dict') else str(rec)
+                        for rec in recommendations
+                    ]
+
             except Exception as e:
                 print(f"Warning: Could not run simulation {simulation_config.id}: {e}")
-                import traceback
-                traceback.print_exc()
                 results[f'{simulation_config.id}_error'] = str(e)
-        
+
         # Cache results
         self.computed_metrics['simulation_results'] = results
         return results
