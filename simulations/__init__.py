@@ -15,7 +15,11 @@ from .models.rc_thermal import (
     RCModelType,
 )
 from .models.real_epc import calculate_epc_rating
-from .config import (
+from .registry import (
+    SimulationsRegistry,
+    SimulationConfig,
+    SimulationCategory,
+    get_simulations_registry,
     list_simulation_models,
     load_simulation_config,
     load_all_simulation_configs,
@@ -32,6 +36,10 @@ __all__ = [
     "RCModelResult",
     "RCModelType",
     "calculate_epc_rating",
+    "SimulationsRegistry",
+    "SimulationConfig",
+    "SimulationCategory",
+    "get_simulations_registry",
     "list_simulation_models",
     "load_simulation_config",
     "load_all_simulation_configs",

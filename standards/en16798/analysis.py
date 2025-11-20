@@ -49,6 +49,49 @@ class EN16798Category(str, Enum):
     CATEGORY_IV = "IV"
 
 
+DEFAULT_CATEGORY_COMPLIANCE_THRESHOLDS: Dict[EN16798Category, float] = {
+    EN16798Category.CATEGORY_I: 95.0,
+    EN16798Category.CATEGORY_II: 95.0,
+    EN16798Category.CATEGORY_III: 90.0,
+    EN16798Category.CATEGORY_IV: 85.0,
+}
+
+
+def get_category_threshold_from_config(
+    category: EN16798Category, config_data: Dict[str, Any]
+) -> float:
+    """
+    Derive the compliance threshold for a category based on config tolerances.
+
+    The tolerance_percentage indicates the maximum share of time points that may
+    violate the rule while still being acceptable. We convert it to a compliance
+    threshold by subtracting the maximum tolerance from 100%.
+    """
+    max_tolerance = 0.0
+    for ruleset in config_data.get("rulesets", []):
+        if ruleset.get("category") != category.value:
+            continue
+        for rule in ruleset.get("rules", []):
+            tolerance = rule.get("tolerance_percentage")
+            if tolerance is None:
+                continue
+            max_tolerance = max(max_tolerance, float(tolerance))
+
+    if max_tolerance > 0:
+        threshold = 100.0 - max_tolerance
+        # Clamp to sensible bounds to avoid invalid config from breaking analysis
+        return max(0.0, min(100.0, threshold))
+
+    return DEFAULT_CATEGORY_COMPLIANCE_THRESHOLDS.get(category, 95.0)
+
+
+def build_category_threshold_map(
+    categories: List[EN16798Category], config_data: Dict[str, Any]
+) -> Dict[EN16798Category, float]:
+    """Build a lookup of compliance thresholds for the provided categories."""
+    return {cat: get_category_threshold_from_config(cat, config_data) for cat in categories}
+
+
 class VentilationType(str, Enum):
     """Building ventilation types for the EN 16798 calculator."""
 
@@ -466,6 +509,9 @@ class EN16798Calculator:
         """Assess which EN 16798-1 category is achieved based on point measurements."""
         if categories_to_check is None:
             categories_to_check = list(EN16798Category)
+        if category_thresholds is None:
+            config_data = load_config()
+            category_thresholds = build_category_threshold_map(categories_to_check, config_data)
 
         achieved_categories: List[EN16798Category] = []
         compliance_details: Dict[EN16798Category, Dict[str, Any]] = {}
@@ -548,6 +594,9 @@ class EN16798Calculator:
         """Assess compliance over time series data."""
         if categories_to_check is None:
             categories_to_check = list(EN16798Category)
+        if category_thresholds is None:
+            config_data = load_config()
+            category_thresholds = build_category_threshold_map(categories_to_check, config_data)
 
         outdoor_running_mean = None
         if outdoor_temperature is not None and len(outdoor_temperature) > 0:
@@ -600,12 +649,16 @@ class EN16798Calculator:
         outdoor_co2: float = OUTDOOR_CO2,
         occupancy_mask: Optional[pd.Series] = None,
         categories_to_check: Optional[List[EN16798Category]] = None,
+        category_thresholds: Optional[Dict[EN16798Category, float]] = None,
     ) -> EN16798DetailedResult:
         """Perform comprehensive EN 16798-1 analysis with detailed metrics."""
         from datetime import datetime
 
         if categories_to_check is None:
             categories_to_check = list(EN16798Category)
+        if category_thresholds is None:
+            config_data = load_config()
+            category_thresholds = build_category_threshold_map(categories_to_check, config_data)
 
         outdoor_running_mean = None
         if outdoor_temperature is not None and len(outdoor_temperature) > 0:
@@ -683,7 +736,11 @@ class EN16798Calculator:
         for category in categories_to_check:
             compliance_array = category_compliance_arrays.get(category)
             compliance_rate = (compliance_array.sum() / total_points * 100) if total_points > 0 and compliance_array is not None else 0.0
-            if compliance_rate >= 95.0:
+            threshold = category_thresholds.get(
+                category,
+                DEFAULT_CATEGORY_COMPLIANCE_THRESHOLDS.get(category, 95.0),
+            )
+            if compliance_rate >= threshold:
                 all_compliant_categories.append(category)
 
         if all_compliant_categories:
@@ -994,13 +1051,50 @@ def run(
     # Use EN16798Calculator for actual computation
     calculator = EN16798Calculator()
 
+    # Extract outdoor_temperature from kwargs if provided
+    outdoor_temperature = kwargs.get('outdoor_temperature')
+    if outdoor_temperature and 'outdoor_temperature' not in timeseries_dict:
+        timeseries_dict['outdoor_temperature'] = outdoor_temperature
+
     # Convert timeseries to pandas Series
     ts_data = {}
     ts_index = pd.to_datetime(timestamps) if timestamps else None
 
     for metric, values in timeseries_dict.items():
         if metric in ['temperature', 'co2', 'humidity', 'outdoor_temperature']:
-            ts_data[metric] = pd.Series(values, index=ts_index) if ts_index is not None else pd.Series(values)
+            # Handle case where values length doesn't match timestamps length
+            # This can happen when data has missing values that were filtered out
+            if ts_index is not None:
+                # If lengths match, use the index directly
+                if len(values) == len(ts_index):
+                    ts_data[metric] = pd.Series(values, index=ts_index)
+                else:
+                    # If lengths don't match, we need a datetime index for outdoor_temperature
+                    # since it's used for resampling
+                    if metric == 'outdoor_temperature':
+                        # For outdoor temperature from climate data, it likely has its own timestamps
+                        # Create a datetime index from the values' natural order
+                        # Assuming it's the same period as the room data
+                        try:
+                            # Try to infer datetime index from the data length
+                            if len(values) > 0:
+                                # Use the timestamps length as reference, create a compatible index
+                                temp_index = pd.date_range(
+                                    start=ts_index[0] if len(ts_index) > 0 else '2024-01-01',
+                                    periods=len(values),
+                                    freq='h'
+                                )
+                                ts_data[metric] = pd.Series(values, index=temp_index)
+                            else:
+                                ts_data[metric] = None
+                        except Exception:
+                            # Fall back to None if we can't create proper index
+                            ts_data[metric] = None
+                    else:
+                        # For other metrics, create series without index
+                        ts_data[metric] = pd.Series(values)
+            else:
+                ts_data[metric] = pd.Series(values)
 
     # Determine ventilation type
     vent_type_map = {
@@ -1019,6 +1113,7 @@ def run(
         'IV': EN16798Category.CATEGORY_IV,
     }
     categories_to_check = [cat_map[rs.category] for rs in rulesets if rs.category in cat_map]
+    category_thresholds = build_category_threshold_map(categories_to_check, config)
 
     # Map season to heating/cooling for calculator
     season_map = {
@@ -1029,7 +1124,8 @@ def run(
     }
     calc_season = season_map.get(season.lower(), 'heating')
 
-    calc_result = calculator.assess_timeseries_compliance(
+    # Use detailed timeseries assessment for comprehensive metrics
+    detailed_result = calculator.assess_detailed_timeseries(
         temperature=ts_data.get('temperature'),
         co2=ts_data.get('co2'),
         humidity=ts_data.get('humidity'),
@@ -1037,39 +1133,78 @@ def run(
         season=calc_season,
         ventilation_type=vent_type,
         categories_to_check=categories_to_check,
+        category_thresholds=category_thresholds,
     )
 
-    # Convert calculator results to TestResult objects
-    test_results = []
-    for category_key, category_data in calc_result.items():
-        compliance_rate = category_data.get('compliance_rate', 0.0)
-        passed = compliance_rate >= 95.0  # Pass if >= 95% compliant
-        
-        # Debug: print threshold information
-        thresholds = category_data.get('thresholds', {})
-        if hasattr(thresholds, '__dict__'):
-            thresh_dict = {
-                'temperature_heating': thresholds.temperature_heating if hasattr(thresholds, 'temperature_heating') else None,
-                'temperature_cooling': thresholds.temperature_cooling if hasattr(thresholds, 'temperature_cooling') else None,
-                'co2_ppm': thresholds.co2_ppm if hasattr(thresholds, 'co2_ppm') else None,
-                'humidity_lower': thresholds.humidity_lower if hasattr(thresholds, 'humidity_lower') else None,
-                'humidity_upper': thresholds.humidity_upper if hasattr(thresholds, 'humidity_upper') else None,
-            }
+    # Calculate compliance rates per category for test results
+    category_compliance_rates = {}
+    for category in categories_to_check:
+        # Get thresholds for this category
+        thresholds = calculator.get_thresholds(
+            category, calc_season, detailed_result.outdoor_running_mean_temp, vent_type
+        )
+
+        # Calculate compliance for each parameter
+        temp_data = ts_data.get('temperature')
+        co2_data = ts_data.get('co2')
+        humidity_data = ts_data.get('humidity')
+
+        compliances = []
+        if temp_data is not None and len(temp_data) > 0:
+            temp_thresh = thresholds.temperature_heating if calc_season == "heating" else thresholds.temperature_cooling
+            temp_compliant = (temp_data >= temp_thresh["lower"]) & (temp_data <= temp_thresh["upper"])
+            compliances.append(temp_compliant)
+
+        if co2_data is not None and len(co2_data) > 0:
+            co2_compliant = co2_data <= thresholds.co2_ppm
+            compliances.append(co2_compliant)
+
+        if humidity_data is not None and len(humidity_data) > 0:
+            rh_compliant = (humidity_data >= thresholds.humidity_lower) & (humidity_data <= thresholds.humidity_upper)
+            compliances.append(rh_compliant)
+
+        if compliances:
+            overall_compliant = pd.concat(compliances, axis=1).all(axis=1)
+            compliance_rate = (overall_compliant.sum() / len(overall_compliant)) * 100
         else:
-            thresh_dict = thresholds
+            compliance_rate = 0.0
+
+        category_compliance_rates[category.value] = compliance_rate
+
+    # Convert detailed results to TestResult objects
+    test_results = []
+    for category in categories_to_check:
+        compliance_rate = category_compliance_rates[category.value]
+        threshold = category_thresholds.get(
+            category,
+            DEFAULT_CATEGORY_COMPLIANCE_THRESHOLDS.get(category, 95.0),
+        )
+        passed = compliance_rate >= threshold
+
+        # Get thresholds for export
+        thresholds = calculator.get_thresholds(
+            category, calc_season, detailed_result.outdoor_running_mean_temp, vent_type
+        )
+        thresh_dict = {
+            'temperature_heating': thresholds.temperature_heating,
+            'temperature_cooling': thresholds.temperature_cooling,
+            'co2_ppm': thresholds.co2_ppm,
+            'humidity_lower': thresholds.humidity_lower,
+            'humidity_upper': thresholds.humidity_upper,
+        }
 
         test_result = TestResult(
-            id=f"test_{spatial_entity.id}_{category_key}",
-            name=f"EN16798 Category {category_key} Test",
+            id=f"test_{spatial_entity.id}_{category.value}",
+            name=f"EN16798 Category {category.value} Test",
             type=AnalysisType.TEST_RESULT,
             spatial_entity_id=spatial_entity.id,
-            rule_id=f"en16798_cat_{category_key}",
+            rule_id=f"en16798_cat_{category.value}",
             successful=passed,
             out_of_range_percentage=100.0 - compliance_rate,
             status=AnalysisStatus.COMPLETED,
             details={
-                'compliance_rate': compliance_rate,
-                'category': category_key,
+                'compliance_rate': round(compliance_rate, 2),
+                'category': category.value,
                 'thresholds': thresh_dict,
             }
         )
@@ -1077,15 +1212,10 @@ def run(
 
     # Determine overall compliance (best achieved category)
     overall_pass = any(tr.successful for tr in test_results)
-    best_category = None
-    best_compliance = 0.0
-    for tr in test_results:
-        compliance = tr.details.get('compliance_rate', 0.0)
-        if tr.successful and compliance > best_compliance:
-            best_compliance = compliance
-            best_category = tr.details.get('category')
+    best_category = detailed_result.achieved_category.value if detailed_result.achieved_category else None
+    best_compliance = detailed_result.overall_compliance_rate
 
-    # Create ComplianceAnalysis
+    # Create ComplianceAnalysis with detailed metrics
     analysis = ComplianceAnalysis(
         id=f"compliance_{spatial_entity.id}_en16798",
         name=f"EN 16798-1 Compliance for {spatial_entity.name}",
@@ -1098,12 +1228,48 @@ def run(
         started_at=datetime.now(timezone.utc),
         ended_at=datetime.now(timezone.utc),
         summary_results={
-            'achieved_category': best_category,  # Changed from best_category to achieved_category
+            'achieved_category': best_category,
             'best_compliance_rate': best_compliance,
-            'tested_categories': [tr.details.get('category') for tr in test_results],
+            'tested_categories': [cat.value for cat in categories_to_check],
             'season': season,
             'standard': 'en16798_1',
             'version': config.get('version', '2024.1'),
+
+            # Detailed category breakdown
+            'category_compliance_rates': {
+                cat.value: round(category_compliance_rates[cat.value], 2)
+                for cat in categories_to_check
+            },
+            'category_thresholds': {
+                cat.value: category_thresholds.get(
+                    cat,
+                    DEFAULT_CATEGORY_COMPLIANCE_THRESHOLDS.get(cat, 95.0),
+                )
+                for cat in categories_to_check
+            },
+            'time_in_category_I_pct': detailed_result.time_in_category_I_pct,
+            'time_in_category_II_pct': detailed_result.time_in_category_II_pct,
+            'time_in_category_III_pct': detailed_result.time_in_category_III_pct,
+            'time_in_category_IV_pct': detailed_result.time_in_category_IV_pct,
+            'time_out_of_all_categories_pct': detailed_result.time_out_of_all_categories_pct,
+
+            # Parameter-specific metrics
+            'parameter_metrics': {
+                'temperature': detailed_result.temperature_metrics if detailed_result.temperature_metrics else None,
+                'co2': detailed_result.co2_metrics if detailed_result.co2_metrics else None,
+                'humidity': detailed_result.humidity_metrics if detailed_result.humidity_metrics else None,
+            },
+
+            # Data quality and metadata
+            'total_data_points': detailed_result.total_data_points,
+            'valid_data_points': detailed_result.valid_data_points,
+            'adaptive_model_used': detailed_result.adaptive_model_used,
+            'outdoor_running_mean_temp': detailed_result.outdoor_running_mean_temp,
+            'ventilation_type': detailed_result.ventilation_type,
+
+            # Aggregation method
+            'aggregation_method': 'time_weighted_percentage',
+            'aggregation_description': 'Compliance calculated as percentage of time points meeting all parameter thresholds simultaneously',
         }
     )
 

@@ -318,19 +318,19 @@ class SpatialEntity(BaseModel):
     ) -> Optional[List[float]]:
         """
         Get timeseries data for a parameter from anywhere in the hierarchy.
-        
+
         This is a convenience method that searches the hierarchy and extracts
         the actual timeseries values from the sensor.
-        
+
         Args:
             parameter: Parameter name (e.g., 'temperature', 'outdoor_temperature')
             parent_lookup: Function to retrieve parent entities by ID
             child_lookup: Function to retrieve child entities by ID
             prefer_parents: If True, search parents first; otherwise search children first
-        
+
         Returns:
             List of timeseries values if found, None otherwise
-        
+
         Examples:
             # Get outdoor temperature from portfolio-level weather station
             outdoor_temp = room.get_timeseries_from_hierarchy(
@@ -338,7 +338,7 @@ class SpatialEntity(BaseModel):
                 parent_lookup=entity_registry.get,
                 prefer_parents=True
             )
-            
+
             # Get room temperature locally or from children
             indoor_temp = building.get_timeseries_from_hierarchy(
                 'temperature',
@@ -346,6 +346,18 @@ class SpatialEntity(BaseModel):
                 prefer_parents=False
             )
         """
+        # First, check for climate_data in building metadata (for outdoor_temperature)
+        if parameter == 'outdoor_temperature' and parent_lookup:
+            # Try to get building from parent hierarchy
+            for parent_id in self.parent_ids:
+                parent = parent_lookup(parent_id)
+                if parent and hasattr(parent, 'metadata'):
+                    climate_data = parent.metadata.get('climate_data', {})
+                    if parameter in climate_data:
+                        values = climate_data[parameter].get('values')
+                        if values:
+                            return values
+
         if prefer_parents:
             # Try parents first, then self, then children
             sensor_group = self.get_sensor_data(
@@ -354,7 +366,7 @@ class SpatialEntity(BaseModel):
                 search_children=False,
                 parent_lookup=parent_lookup,
             )
-            
+
             if not sensor_group and child_lookup:
                 sensor_group = self.get_sensor_data(
                     parameter,
@@ -370,7 +382,7 @@ class SpatialEntity(BaseModel):
                 search_children=True,
                 child_lookup=child_lookup,
             )
-            
+
             if not sensor_group and parent_lookup:
                 sensor_group = self.get_sensor_data(
                     parameter,
@@ -378,13 +390,13 @@ class SpatialEntity(BaseModel):
                     search_children=False,
                     parent_lookup=parent_lookup,
                 )
-        
+
         if not sensor_group or not sensor_group.sensors:
             return None
-        
+
         # Extract timeseries data from the first sensor
         first_sensor = sensor_group.sensors[0]
-        
+
         # Try to get timeseries from sensor metadata
         if 'timeseries' in first_sensor.metadata:
             ts_data = first_sensor.metadata['timeseries']
@@ -395,7 +407,7 @@ class SpatialEntity(BaseModel):
                     return first_ts['values']
             elif isinstance(ts_data, list):
                 return ts_data
-        
+
         return None
 
     def get_available_parameters(

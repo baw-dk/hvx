@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import * as Icons from 'lucide-react';
 import { Node, Edge } from 'reactflow';
 import { NodeData, SpatialEntityType, SensorType } from '@/lib/nodeTypes';
+import { apiClient, convertPortfolioToAPIFormat, BatchAnalysisResult } from '@/lib/apiClient';
+import AnalysisResults from './AnalysisResults';
 
 // Hierarchical structure from zip file
 interface Portfolio {
@@ -64,10 +66,28 @@ export default function ZipWizard({
 
   const [editedPortfolio, setEditedPortfolio] = useState<Portfolio | null>(parsedStructure);
 
+  // Backend integration state
+  const [isBackendProcessing, setIsBackendProcessing] = useState(false);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [analysisResults, setAnalysisResults] = useState<BatchAnalysisResult | null>(null);
+  const [portfolioId, setPortfolioId] = useState<string | null>(null);
+  const [showResults, setShowResults] = useState(false);
+
   if (!isOpen || !editedPortfolio) return null;
 
   const currentBuilding = editedPortfolio.buildings[currentBuildingIndex];
   const currentFloor = currentBuilding?.floors[currentFloorIndex];
+
+  // Helper to check if a building has explicit floors (not auto-generated default_floor)
+  const hasExplicitFloors = (building: Building) => {
+    return building.floors.length > 0 &&
+           !(building.floors.length === 1 && building.floors[0].folder === 'default_floor');
+  };
+
+  // Helper to check if any building has explicit floors
+  const anyBuildingHasExplicitFloors = () => {
+    return editedPortfolio?.buildings.some(b => hasExplicitFloors(b)) || false;
+  };
 
   const handleNext = () => {
     if (currentStep === 'portfolio') {
@@ -76,21 +96,39 @@ export default function ZipWizard({
       if (currentBuildingIndex < editedPortfolio.buildings.length - 1) {
         setCurrentBuildingIndex(currentBuildingIndex + 1);
       } else {
-        setCurrentStep('floors');
-        setCurrentBuildingIndex(0);
-        setCurrentFloorIndex(0);
+        // Skip floors step if no buildings have explicit floors
+        if (anyBuildingHasExplicitFloors()) {
+          setCurrentStep('floors');
+          // Find first building with explicit floors
+          const firstBuildingWithFloorsIdx = editedPortfolio.buildings.findIndex(b => hasExplicitFloors(b));
+          setCurrentBuildingIndex(firstBuildingWithFloorsIdx >= 0 ? firstBuildingWithFloorsIdx : 0);
+          setCurrentFloorIndex(0);
+        } else {
+          setCurrentStep('rooms');
+          setCurrentBuildingIndex(0);
+          setCurrentFloorIndex(0);
+        }
       }
     } else if (currentStep === 'floors') {
       const building = editedPortfolio.buildings[currentBuildingIndex];
       if (currentFloorIndex < building.floors.length - 1) {
         setCurrentFloorIndex(currentFloorIndex + 1);
-      } else if (currentBuildingIndex < editedPortfolio.buildings.length - 1) {
-        setCurrentBuildingIndex(currentBuildingIndex + 1);
-        setCurrentFloorIndex(0);
       } else {
-        setCurrentStep('rooms');
-        setCurrentBuildingIndex(0);
-        setCurrentFloorIndex(0);
+        // Find next building with explicit floors
+        let nextBuildingIdx = currentBuildingIndex + 1;
+        while (nextBuildingIdx < editedPortfolio.buildings.length &&
+               !hasExplicitFloors(editedPortfolio.buildings[nextBuildingIdx])) {
+          nextBuildingIdx++;
+        }
+
+        if (nextBuildingIdx < editedPortfolio.buildings.length) {
+          setCurrentBuildingIndex(nextBuildingIdx);
+          setCurrentFloorIndex(0);
+        } else {
+          setCurrentStep('rooms');
+          setCurrentBuildingIndex(0);
+          setCurrentFloorIndex(0);
+        }
       }
     } else if (currentStep === 'rooms') {
       setCurrentStep('review');
@@ -107,16 +145,41 @@ export default function ZipWizard({
     } else if (currentStep === 'floors') {
       if (currentFloorIndex > 0) {
         setCurrentFloorIndex(currentFloorIndex - 1);
-      } else if (currentBuildingIndex > 0) {
-        setCurrentBuildingIndex(currentBuildingIndex - 1);
-        const prevBuilding = editedPortfolio.buildings[currentBuildingIndex - 1];
-        setCurrentFloorIndex(prevBuilding.floors.length - 1);
+      } else {
+        // Find previous building with explicit floors
+        let prevBuildingIdx = currentBuildingIndex - 1;
+        while (prevBuildingIdx >= 0 &&
+               !hasExplicitFloors(editedPortfolio.buildings[prevBuildingIdx])) {
+          prevBuildingIdx--;
+        }
+
+        if (prevBuildingIdx >= 0) {
+          setCurrentBuildingIndex(prevBuildingIdx);
+          const prevBuilding = editedPortfolio.buildings[prevBuildingIdx];
+          setCurrentFloorIndex(prevBuilding.floors.length - 1);
+        } else {
+          setCurrentStep('buildings');
+          setCurrentBuildingIndex(editedPortfolio.buildings.length - 1);
+        }
+      }
+    } else if (currentStep === 'rooms') {
+      // Go back to floors only if any building has explicit floors
+      if (anyBuildingHasExplicitFloors()) {
+        setCurrentStep('floors');
+        // Find last building with explicit floors
+        let lastBuildingWithFloorsIdx = editedPortfolio.buildings.length - 1;
+        while (lastBuildingWithFloorsIdx >= 0 &&
+               !hasExplicitFloors(editedPortfolio.buildings[lastBuildingWithFloorsIdx])) {
+          lastBuildingWithFloorsIdx--;
+        }
+        if (lastBuildingWithFloorsIdx >= 0) {
+          setCurrentBuildingIndex(lastBuildingWithFloorsIdx);
+          setCurrentFloorIndex(editedPortfolio.buildings[lastBuildingWithFloorsIdx].floors.length - 1);
+        }
       } else {
         setCurrentStep('buildings');
         setCurrentBuildingIndex(editedPortfolio.buildings.length - 1);
       }
-    } else if (currentStep === 'rooms') {
-      setCurrentStep('floors');
     } else if (currentStep === 'review') {
       setCurrentStep('rooms');
     }
@@ -128,6 +191,45 @@ export default function ZipWizard({
     const { nodes, edges } = generateFlowFromStructure(editedPortfolio);
     onGenerate(nodes, edges);
     onClose();
+  };
+
+  const handleSendToBackend = async () => {
+    if (!editedPortfolio) return;
+
+    setIsBackendProcessing(true);
+    setBackendError(null);
+
+    try {
+      // Convert portfolio to API format
+      const portfolioData = convertPortfolioToAPIFormat(editedPortfolio);
+
+      // Create portfolio in backend
+      const createResponse = await apiClient.createPortfolioFromFlowEditor(portfolioData);
+      setPortfolioId(createResponse.portfolio_id);
+
+      // Run all analyses
+      const analysisRequest = {
+        analyses: ['en16798', 'tail', 'br18', 'occupancy', 'ventilation', 'rc_thermal', 'epc'],
+        season: 'heating' as const,
+      };
+
+      const results = await apiClient.runBatchAnalysis(
+        createResponse.portfolio_id,
+        analysisRequest
+      );
+
+      setAnalysisResults(results);
+
+      // Show results dialog
+      setShowResults(true);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setBackendError(errorMessage);
+      console.error('Backend processing error:', error);
+      alert(`Backend error: ${errorMessage}`);
+    } finally {
+      setIsBackendProcessing(false);
+    }
   };
 
   const updatePortfolioMetadata = (key: string, value: any) => {
@@ -397,7 +499,7 @@ export default function ZipWizard({
                 </div>
               </div>
               <div className="mt-2 text-xs text-gray-500">
-                {room.sensors.length} sensor(s): {room.sensors.map(s => s.sensorType).join(', ')}
+                {room.sensors.length} sensor(s): {room.sensors.map((s: SensorFile) => s.sensorType).join(', ')}
               </div>
             </div>
           ))}
@@ -422,7 +524,7 @@ export default function ZipWizard({
                 Building • {building.metadata?.area_m2}m² • {building.metadata?.country}
               </div>
             </div>
-            {building.floors.map((floor, fIdx) => (
+            {building.floors.filter(floor => floor.folder !== 'default_floor').map((floor, fIdx) => (
               <div key={fIdx} className="ml-6 space-y-1">
                 <div className="border-l-4 border-green-500 pl-3">
                   <div className="font-medium">{floor.name}</div>
@@ -436,6 +538,15 @@ export default function ZipWizard({
                     </div>
                   </div>
                 ))}
+              </div>
+            ))}
+            {/* Show rooms directly under building if using default_floor */}
+            {building.floors.length === 1 && building.floors[0].folder === 'default_floor' && building.floors[0].rooms.map((room, rIdx) => (
+              <div key={rIdx} className="ml-6">
+                <div className="border-l-4 border-amber-500 pl-3">
+                  <div className="font-medium text-sm">{room.name}</div>
+                  <div className="text-xs text-gray-500">{room.sensors.length} sensors</div>
+                </div>
               </div>
             ))}
           </div>
@@ -467,8 +578,12 @@ export default function ZipWizard({
             <Step label="Portfolio" active={currentStep === 'portfolio'} completed={['buildings', 'floors', 'rooms', 'review'].includes(currentStep)} />
             <div className="flex-1 h-px bg-gray-300 mx-2" />
             <Step label="Buildings" active={currentStep === 'buildings'} completed={['floors', 'rooms', 'review'].includes(currentStep)} />
-            <div className="flex-1 h-px bg-gray-300 mx-2" />
-            <Step label="Floors" active={currentStep === 'floors'} completed={['rooms', 'review'].includes(currentStep)} />
+            {anyBuildingHasExplicitFloors() && (
+              <>
+                <div className="flex-1 h-px bg-gray-300 mx-2" />
+                <Step label="Floors" active={currentStep === 'floors'} completed={['rooms', 'review'].includes(currentStep)} />
+              </>
+            )}
             <div className="flex-1 h-px bg-gray-300 mx-2" />
             <Step label="Rooms" active={currentStep === 'rooms'} completed={currentStep === 'review'} />
             <div className="flex-1 h-px bg-gray-300 mx-2" />
@@ -503,13 +618,32 @@ export default function ZipWizard({
               Cancel
             </button>
             {currentStep === 'review' ? (
-              <button
-                onClick={handleGenerate}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center gap-2"
-              >
-                <Icons.Check size={16} />
-                Generate Flow
-              </button>
+              <>
+                <button
+                  onClick={handleSendToBackend}
+                  disabled={isBackendProcessing}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isBackendProcessing ? (
+                    <>
+                      <Icons.Loader2 size={16} className="animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Icons.Database size={16} />
+                      Send to Backend & Analyze
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleGenerate}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center gap-2"
+                >
+                  <Icons.Check size={16} />
+                  Generate Flow
+                </button>
+              </>
             ) : (
               <button
                 onClick={handleNext}
@@ -522,6 +656,15 @@ export default function ZipWizard({
           </div>
         </div>
       </div>
+
+      {/* Analysis Results Dialog */}
+      {showResults && analysisResults && portfolioId && (
+        <AnalysisResults
+          results={analysisResults}
+          portfolioId={portfolioId}
+          onClose={() => setShowResults(false)}
+        />
+      )}
     </div>
   );
 }
