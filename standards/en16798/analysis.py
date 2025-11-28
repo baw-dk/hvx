@@ -424,7 +424,12 @@ class EN16798Calculator:
         daily_outdoor_temps: List[float],
         alpha: float = 0.8,
     ) -> Optional[float]:
-        """Calculate exponentially-weighted running mean outdoor temperature."""
+        """
+        Calculate exponentially-weighted running mean outdoor temperature for a single point.
+
+        This is kept for backward compatibility but returns a single value.
+        Use calculate_running_mean_timeseries for time-varying calculations.
+        """
         if not daily_outdoor_temps or len(daily_outdoor_temps) < 7:
             return sum(daily_outdoor_temps) / len(daily_outdoor_temps) if daily_outdoor_temps else None
 
@@ -437,6 +442,70 @@ class EN16798Calculator:
             weight_sum += (1 - alpha) * weight
 
         return t_rm / weight_sum if weight_sum > 0 else None
+
+    @classmethod
+    def calculate_running_mean_timeseries(
+        cls,
+        outdoor_temp_series: pd.Series,
+        alpha: float = 0.8,
+    ) -> pd.Series:
+        """
+        Calculate running mean outdoor temperature as a time series using pythermalcomfort approach.
+
+        According to EN 16798-1 and pythermalcomfort.utilities.running_mean_outdoor_temperature():
+        T_rm = (α^0 * T_ed-1 + α^1 * T_ed-2 + α^2 * T_ed-3 + ...) / Σ(α^i)
+
+        Where:
+        - T_ed-1 is the daily mean outdoor temperature of the previous day
+        - T_ed-2 is from 2 days ago, etc.
+        - α is the constant between 0 and 1 (default 0.8 for EN16798)
+        - The weights are α^0=1.0, α^1=0.8, α^2=0.64, etc. (decreasing exponentially)
+
+        Implementation matches pythermalcomfort where temp_array = [T_ed-1, T_ed-2, ..., T_ed-n]
+
+        Args:
+            outdoor_temp_series: Pandas Series of outdoor temperatures with DatetimeIndex
+            alpha: Exponential weighting factor (default 0.8)
+
+        Returns:
+            Pandas Series of daily running mean temperatures, forward-filled to match input frequency
+        """
+        if outdoor_temp_series is None or len(outdoor_temp_series) == 0:
+            return pd.Series(dtype=float)
+
+        # Resample to daily mean temperatures
+        daily_temps = outdoor_temp_series.resample('D').mean().dropna()
+
+        # Calculate running mean for each day using exponential weights
+        running_means = []
+
+        for i in range(len(daily_temps)):
+            if i == 0:
+                # For first day, use the current day's temperature
+                running_means.append(daily_temps.iloc[i])
+            else:
+                # Build temp_array in format [T_ed-1, T_ed-2, T_ed-3, ...]
+                # This matches pythermalcomfort.utilities.running_mean_outdoor_temperature()
+                lookback = min(i, 30)  # Look back up to 30 days
+                temp_array = [daily_temps.iloc[i - j - 1] for j in range(lookback)]
+
+                # Calculate weights: [α^0, α^1, α^2, ...]
+                weights = [alpha ** j for j in range(len(temp_array))]
+
+                # Calculate weighted mean
+                t_rm = sum(w * t for w, t in zip(weights, temp_array)) / sum(weights)
+                running_means.append(t_rm)
+
+        # Create series with daily running means
+        running_mean_daily = pd.Series(running_means, index=daily_temps.index)
+
+        # Forward-fill to match original frequency (so hourly indoor temps use the daily threshold)
+        running_mean_series = running_mean_daily.reindex(
+            outdoor_temp_series.index,
+            method='ffill'
+        )
+
+        return running_mean_series
 
     @classmethod
     def get_thresholds(
@@ -638,6 +707,58 @@ class EN16798Calculator:
         return results
 
     @classmethod
+    def _calculate_adaptive_compliance(
+        cls,
+        temperature: pd.Series,
+        running_mean_series: pd.Series,
+        category: EN16798Category,
+        season: str = "heating",
+    ) -> pd.Series:
+        """
+        Calculate temperature compliance using adaptive model with time-varying thresholds.
+
+        Each hourly indoor temperature is evaluated against the adaptive thresholds
+        calculated from that day's outdoor running mean temperature.
+
+        Args:
+            temperature: Indoor temperature series
+            running_mean_series: Outdoor running mean temperature series (daily values forward-filled)
+            category: EN16798 category to evaluate
+            season: Season for non-adaptive fallback
+
+        Returns:
+            Boolean series indicating compliance at each timestamp
+        """
+        compliant = pd.Series([True] * len(temperature), index=temperature.index)
+
+        for idx in temperature.index:
+            if idx not in running_mean_series.index:
+                compliant[idx] = False
+                continue
+
+            t_rm = running_mean_series[idx]
+            t_indoor = temperature[idx]
+
+            # Check if adaptive model is applicable (10-30°C range)
+            if pd.isna(t_rm) or t_rm < 10.0 or t_rm > 30.0:
+                # Fallback to non-adaptive thresholds
+                if season.lower() == "heating":
+                    thresholds = cls.TEMP_HEATING[category]
+                else:
+                    thresholds = cls.TEMP_COOLING[category]
+            else:
+                # Use adaptive thresholds based on this timestamp's running mean
+                thresholds = cls._get_adaptive_temperature_thresholds(category, t_rm)
+
+            # Check compliance
+            if pd.isna(t_indoor):
+                compliant[idx] = False
+            else:
+                compliant[idx] = (t_indoor >= thresholds["lower"]) and (t_indoor <= thresholds["upper"])
+
+        return compliant
+
+    @classmethod
     def assess_detailed_timeseries(
         cls,
         temperature: Optional[pd.Series] = None,
@@ -651,7 +772,12 @@ class EN16798Calculator:
         categories_to_check: Optional[List[EN16798Category]] = None,
         category_thresholds: Optional[Dict[EN16798Category, float]] = None,
     ) -> EN16798DetailedResult:
-        """Perform comprehensive EN 16798-1 analysis with detailed metrics."""
+        """
+        Perform comprehensive EN 16798-1 analysis with detailed metrics.
+
+        Calculates both adaptive and non-adaptive results when outdoor temperature is available.
+        Uses pythermalcomfort approach: daily running mean thresholds applied to hourly indoor temperatures.
+        """
         from datetime import datetime
 
         if categories_to_check is None:
@@ -660,10 +786,23 @@ class EN16798Calculator:
             config_data = load_config()
             category_thresholds = build_category_threshold_map(categories_to_check, config_data)
 
-        outdoor_running_mean = None
+        # Calculate running mean time series using pythermalcomfort approach
+        running_mean_series = None
+        outdoor_running_mean_single = None
+        can_use_adaptive = False
+
         if outdoor_temperature is not None and len(outdoor_temperature) > 0:
+            running_mean_series = cls.calculate_running_mean_timeseries(outdoor_temperature)
+            # Also calculate single value for backward compatibility and metadata
             daily_temps = outdoor_temperature.resample("D").mean().dropna().tolist()
-            outdoor_running_mean = cls.calculate_running_mean_outdoor_temp(daily_temps)
+            outdoor_running_mean_single = cls.calculate_running_mean_outdoor_temp(daily_temps)
+
+            # Check if adaptive model can be used
+            can_use_adaptive = (
+                ventilation_type in [VentilationType.NATURAL, VentilationType.MIXED_MODE]
+                and running_mean_series is not None
+                and len(running_mean_series) > 0
+            )
 
         if occupancy_mask is not None:
             if temperature is not None:
@@ -681,12 +820,13 @@ class EN16798Calculator:
         if humidity is not None:
             total_points = max(total_points, len(humidity))
 
-        category_compliance_arrays: Dict[EN16798Category, pd.Series] = {cat: pd.Series(dtype=bool) for cat in categories_to_check}
-        violations: List[Dict[str, Any]] = []
+        # Calculate compliance for NON-ADAPTIVE model (always calculated)
+        category_compliance_nonadaptive: Dict[EN16798Category, pd.Series] = {}
 
         for category in categories_to_check:
+            # Non-adaptive thresholds (fixed by season)
             thresholds = cls.get_thresholds(
-                category, season, outdoor_running_mean, ventilation_type, outdoor_co2
+                category, season, None, VentilationType.MECHANICAL, outdoor_co2
             )
 
             temp_compliant = pd.Series([True] * total_points)
@@ -703,7 +843,37 @@ class EN16798Calculator:
                 rh_compliant = (humidity >= thresholds.humidity_lower) & (humidity <= thresholds.humidity_upper)
 
             overall_compliant = temp_compliant & co2_compliant & rh_compliant
-            category_compliance_arrays[category] = overall_compliant
+            category_compliance_nonadaptive[category] = overall_compliant
+
+        # Calculate compliance for ADAPTIVE model (if applicable)
+        category_compliance_adaptive: Dict[EN16798Category, pd.Series] = {}
+        adaptive_used = False
+
+        if can_use_adaptive and temperature is not None and len(temperature) > 0:
+            adaptive_used = True
+            for category in categories_to_check:
+                # Use time-varying adaptive thresholds for temperature
+                temp_compliant_adaptive = cls._calculate_adaptive_compliance(
+                    temperature, running_mean_series, category, season
+                )
+
+                # CO2 and humidity use same thresholds as non-adaptive
+                co2_compliant = pd.Series([True] * total_points)
+                if co2 is not None and len(co2) > 0:
+                    thresholds = cls.get_thresholds(category, season, None, ventilation_type, outdoor_co2)
+                    co2_compliant = co2 <= thresholds.co2_ppm
+
+                rh_compliant = pd.Series([True] * total_points)
+                if humidity is not None and len(humidity) > 0:
+                    thresholds = cls.get_thresholds(category, season, None, ventilation_type, outdoor_co2)
+                    rh_compliant = (humidity >= thresholds.humidity_lower) & (humidity <= thresholds.humidity_upper)
+
+                overall_compliant_adaptive = temp_compliant_adaptive & co2_compliant & rh_compliant
+                category_compliance_adaptive[category] = overall_compliant_adaptive
+
+        # Use adaptive results as primary if available, otherwise use non-adaptive
+        category_compliance_arrays = category_compliance_adaptive if adaptive_used else category_compliance_nonadaptive
+        violations: List[Dict[str, Any]] = []
 
         time_in_cat_I = 0
         time_in_cat_II = 0
@@ -755,7 +925,7 @@ class EN16798Calculator:
                 temperature,
                 season,
                 categories_to_check,
-                outdoor_running_mean,
+                outdoor_running_mean_single,
                 ventilation_type,
                 outdoor_co2,
             )
@@ -767,7 +937,7 @@ class EN16798Calculator:
                 co2,
                 season,
                 categories_to_check,
-                outdoor_running_mean,
+                outdoor_running_mean_single,
                 ventilation_type,
                 outdoor_co2,
             )
@@ -779,7 +949,7 @@ class EN16798Calculator:
                 humidity,
                 season,
                 categories_to_check,
-                outdoor_running_mean,
+                outdoor_running_mean_single,
                 ventilation_type,
                 outdoor_co2,
             )
@@ -817,8 +987,8 @@ class EN16798Calculator:
             violations=violations,
             total_violations=len(violations),
             season=season,
-            adaptive_model_used=bool(outdoor_running_mean is not None),
-            outdoor_running_mean_temp=outdoor_running_mean,
+            adaptive_model_used=adaptive_used,
+            outdoor_running_mean_temp=outdoor_running_mean_single,
             ventilation_type=ventilation_type.value,
             analysis_timestamp=datetime.now(timezone.utc).isoformat(),
         )
@@ -1229,8 +1399,6 @@ def run(
         ended_at=datetime.now(timezone.utc),
         summary_results={
             'achieved_category': best_category,
-            'best_compliance_rate': best_compliance,
-            'tested_categories': [cat.value for cat in categories_to_check],
             'season': season,
             'standard': 'en16798_1',
             'version': config.get('version', '2024.1'),
