@@ -125,6 +125,7 @@ class CSVDataLoader:
                 spatial_entity_id=entity.id,
                 metric=metric_type,
                 unit=self._get_unit(metric_name),
+                parameter=metric_name,
                 timeseries_ids=[],
             )
             metering_points[point_id] = point
@@ -276,6 +277,7 @@ class CSVDataLoader:
                     spatial_entity_id=entity_id,
                     metric=metric_type,
                     unit=self._get_unit(metric_name),
+                    parameter=metric_name,
                     timeseries_ids=[],
                 )
                 all_metering_points[point_id] = point

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.spacial_entity import SpatialEntity
 from core.entities import Room, Building, Floor, Portfolio
-from core.enums import SpatialEntityType
+from core.enums import SpatialEntityType, VentilationType
 from core.metering import (
     MeteringPoint,
     TimeSeries,
@@ -169,6 +169,7 @@ class PortfolioLoader:
                 id=building_id,
                 name=building_id.replace("-", " ").title(),
                 type=SpatialEntityType.BUILDING,
+                building_type="school",  # Hoeje-Taastrup is an educational building
             )
             all_entities[building.id] = building
             self.buildings[building.id] = building
@@ -190,6 +191,10 @@ class PortfolioLoader:
                         metric_columns={
                             "mean_temp": "outdoor_temperature",
                             "mean_relative_hum": "outdoor_humidity",
+                            "mean_radiation": "solar_radiation",
+                            "bright_sunshine": "sunshine_duration",
+                            "mean_wind_speed": "wind_speed",
+                            "acc_precip": "precipitation",
                         }
                     )
                     all_entities.update({entity.id: entity})
@@ -197,19 +202,27 @@ class PortfolioLoader:
                     all_ts.update(ts)
 
                     # Extract outdoor temperature for rooms to use
-                    from core.enums import MetricType
                     for point in points.values():
-                        if point.metric == MetricType.OUTDOOR_TEMPERATURE:
-                            for ts_id in point.timeseries_ids:
-                                if ts_id in ts:
-                                    climate_data['outdoor_temperature'] = {
-                                        'timestamps': ts[ts_id].metadata.get('timestamps', []),
-                                        'values': ts[ts_id].metadata.get('values', []),
-                                    }
+                        metric_key = point.parameter or (point.metric.value if point.metric else None) or point.id
+                        if not metric_key:
+                            continue
+                        for ts_id in point.timeseries_ids:
+                            if ts_id not in ts:
+                                continue
+                            timestamps = ts[ts_id].metadata.get('timestamps', [])
+                            values = ts[ts_id].metadata.get('values', [])
+                            if not timestamps or not values:
+                                continue
+                            climate_data[metric_key] = {
+                                'timestamps': timestamps,
+                                'values': values,
+                                'point_id': point.id,
+                                'timeseries_id': ts_id,
+                            }
 
                     # Store climate data on building for room access
                     if climate_data:
-                        building.metadata['climate_data'] = climate_data
+                        building.metadata.setdefault('climate_data', {}).update(climate_data)
             
             # Load sensor/room data
             sensors_dir = building_dir / "sensors"
@@ -237,7 +250,12 @@ class PortfolioLoader:
                             },
                             building_id=building.id,
                         )
-                        
+
+                        # Set room_type and ventilation_type for all Hoeje-Taastrup rooms
+                        if isinstance(entity, Room):
+                            entity.room_type = "classroom"
+                            entity.ventilation_type = VentilationType.NATURAL
+
                         all_entities[entity.id] = entity
                         all_points.update(points)
                         all_ts.update(ts)
@@ -249,6 +267,7 @@ class PortfolioLoader:
                         print(f"Warning: Failed to load {sensor_file}: {e}")
                         continue
         self._attach_room_sensors(all_entities, all_points, all_ts)
+        self._propagate_climate_data_to_rooms()
 
         return PortfolioLoadResult(
             entities=all_entities,
@@ -412,6 +431,7 @@ class PortfolioLoader:
         
         # Attach sensors and timeseries data to rooms
         self._attach_room_sensors(all_entities, all_points, all_ts)
+        self._propagate_climate_data_to_rooms()
         
         return all_entities, all_points, all_ts
 
@@ -480,7 +500,7 @@ class PortfolioLoader:
                 id=f"sensor::{point.id}",
                 spatial_entity_id=target.id,
                 metric=point.metric,
-                parameter=point.metric.value or point.parameter or point.id,
+                parameter=point.parameter or (point.metric.value if point.metric else point.id) or point.id,
                 unit=point.unit or "",
                 name=point.name,
                 metadata={"source_point_id": point.id},
@@ -495,7 +515,7 @@ class PortfolioLoader:
                     continue
 
                 # Use the mapped metric name instead of original CSV column name
-                metric_key = point.metric.value or point.parameter or point.id
+                metric_key = point.parameter or (point.metric.value if point.metric else None) or point.id
                 csv_column = ts.metadata.get("csv_column")  # Keep original for reference
                 sensor.metadata.setdefault("timeseries", {})[ts.id] = {
                     "timestamps": timestamps,
@@ -507,6 +527,50 @@ class PortfolioLoader:
                 }
                 # Use mapped metric name as the key in room timeseries_data
                 target.add_timeseries(metric_key, values, timestamps)
+
+    def _propagate_climate_data_to_rooms(self) -> None:
+        """
+        Copy building-level climate metrics onto each room so downstream analysis
+        (correlations, scenarios) can access outdoor references.
+        """
+        if not self.rooms or not self.buildings:
+            return
+
+        climate_metrics = {
+            "outdoor_temperature",
+            "outdoor_humidity",
+            "solar_radiation",
+            "solar_irradiance",
+            "sunshine_duration",
+            "wind_speed",
+            "precipitation",
+        }
+
+        for room in self.rooms.values():
+            if not room.building_id:
+                continue
+
+            building = self.buildings.get(room.building_id)
+            if not building:
+                continue
+
+            climate_data = getattr(building, "metadata", {}).get("climate_data", {})
+            if not climate_data:
+                continue
+
+            for metric_key, payload in climate_data.items():
+                normalized_key = metric_key.replace(" ", "_").lower()
+                if normalized_key not in climate_metrics:
+                    continue
+                if metric_key in room.timeseries_data:
+                    continue
+
+                values = payload.get("values")
+                timestamps = payload.get("timestamps")
+                if not values:
+                    continue
+
+                room.add_timeseries(metric_key, values, timestamps)
 
     def _attach_building_dataset(
         self,
@@ -526,7 +590,7 @@ class PortfolioLoader:
         bucket = building.metadata.setdefault(bucket_name, {})
 
         for point in dataset_points.values():
-            metric_key = point.metric.value or point.parameter or point.id
+            metric_key = point.parameter or (point.metric.value if point.metric else None) or point.id
             metric_key = metric_key.replace(" ", "_").lower()
             point_id = f"{building.id}_{dataset_key}_{metric_key}"
             point_name = f"{building.name} {metric_key.replace('_', ' ').title()} ({dataset_key})"

@@ -190,7 +190,20 @@ def run(
     test_results: List[TestResult] = []
     rules_summary: Dict[str, Any] = {}
 
+    # Get building_type from spatial entity for rule filtering
+    entity_building_type = spatial_entity.building_type
+    if not entity_building_type and hasattr(spatial_entity, 'room_type'):
+        # For rooms, we might infer building type from room type
+        entity_building_type = spatial_entity.room_type
+
     for rule_cfg in config.get("rules", []):
+        # Filter rules by applicable_building_types
+        applicable_types = rule_cfg.get("applicable_building_types", [])
+        if applicable_types and entity_building_type:
+            # Check if the entity's building_type matches any of the rule's applicable types
+            if entity_building_type not in applicable_types:
+                continue
+
         metric = rule_cfg.get("metric")
         series = series_cache.get(metric)
         evaluation = _evaluate_rule(series, rule_cfg) if series is not None else None
