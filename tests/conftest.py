@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.entities import Building, Floor, Portfolio, Room  # noqa: E402
-from core.enums import SpatialEntityType  # noqa: E402
+from hvx.core.entities import Building, Floor, Portfolio, Room  # noqa: E402
+from hvx.core.enums import SpatialEntityType  # noqa: E402
 
 Hierarchy = Tuple[Portfolio, Dict[str, Building], Dict[str, Floor], Dict[str, Room]]
 
@@ -70,3 +70,44 @@ def make_portfolio(
 @pytest.fixture
 def portfolio() -> Hierarchy:
     return make_portfolio()
+
+
+@pytest.fixture
+def ifc_file(tmp_path):
+    pytest.importorskip("ifcopenshell")
+    import ifcopenshell
+    import ifcopenshell.api.aggregate
+    import ifcopenshell.api.pset
+    import ifcopenshell.api.root
+    import ifcopenshell.api.spatial
+    import ifcopenshell.api.unit
+
+    model = ifcopenshell.file(schema="IFC4")
+    create = lambda cls, name: ifcopenshell.api.root.create_entity(model, ifc_class=cls, name=name)  # noqa: E731
+    project = create("IfcProject", "Demo project")
+    ifcopenshell.api.unit.assign_unit(model)
+    site = create("IfcSite", "Site")
+    building = create("IfcBuilding", "HQ")
+    storeys = [create("IfcBuildingStorey", n) for n in ("Basement", "Ground", "First")]
+    for s, z in zip(storeys, (-3.0, 0.0, 3.5)):
+        s.Elevation = z
+    ifcopenshell.api.aggregate.assign_object(model, products=[site], relating_object=project)
+    ifcopenshell.api.aggregate.assign_object(model, products=[building], relating_object=site)
+    ifcopenshell.api.aggregate.assign_object(model, products=storeys, relating_object=building)
+    space = create("IfcSpace", "1.01")
+    space.LongName = "Meeting room 1.01"
+    ifcopenshell.api.aggregate.assign_object(model, products=[space], relating_object=storeys[1])
+    qto = ifcopenshell.api.pset.add_qto(model, product=space, name="Qto_SpaceBaseQuantities")
+    ifcopenshell.api.pset.edit_qto(model, qto=qto, properties={"NetFloorArea": 24.5, "NetVolume": 66.0})
+    from hvx.core.semantics.ieq import IEQRequirements
+
+    for name, props in IEQRequirements(target_category="I", temperature_min_c=21, humidity_max_pct=50, co2_max_ppm=950,
+                                        occupancy_type="meeting_room", design_occupancy=6).to_ifc_psets().items():
+        pset = ifcopenshell.api.pset.add_pset(model, product=space, name=name)
+        ifcopenshell.api.pset.edit_pset(model, pset=pset, properties=props)
+    sensor = create("IfcSensor", "CO2 1.01")
+    sensor.PredefinedType = "CO2SENSOR"
+    ifcopenshell.api.spatial.assign_container(model, products=[sensor], relating_structure=space)
+    path = tmp_path / "demo.ifc"
+    model.write(str(path))
+    return path, space.GlobalId

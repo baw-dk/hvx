@@ -7,11 +7,11 @@ import json
 
 import pytest
 
-from reporting import ReportBuilder, ReportConfig, render
-from reporting.aggregate import group_category
-from reporting.frames import climate_frame, room_frame
-from reporting.model import SCHEMA_VERSION
-from simulations.models.reporting import HTMLReportService
+from hvx.reporting import ReportBuilder, ReportConfig, render
+from hvx.reporting.aggregate import group_category
+from hvx.reporting.frames import climate_frame, room_frame
+from hvx.reporting.model import SCHEMA_VERSION
+from hvx.simulations.models.reporting import HTMLReportService
 from tests.conftest import make_portfolio
 
 FAST = dict(parallel_backend="serial", include_simulations=False)
@@ -78,8 +78,7 @@ def test_rooms_without_data_and_failures_are_isolated(portfolio, monkeypatch):
 
 
 def test_error_in_one_room_does_not_abort(portfolio, monkeypatch):
-    import reporting.analysis as analysis
-
+    import hvx.reporting.analysis as analysis
     original = analysis._combine
 
     def flaky(report, *args, **kwargs):

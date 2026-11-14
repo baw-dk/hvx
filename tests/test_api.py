@@ -7,7 +7,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-import app.api as api  # noqa: E402
+import hvx.app.api as api  # noqa: E402
 from tests.conftest import make_portfolio  # noqa: E402
 
 

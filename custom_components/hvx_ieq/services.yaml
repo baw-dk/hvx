@@ -1,0 +1,15 @@
+generate_report:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: hvx_ieq
+    format:
+      default: html
+      selector:
+        select:
+          options: ["html", "json", "csv"]
+    full_analysis:
+      default: true
+      selector:
+        boolean:

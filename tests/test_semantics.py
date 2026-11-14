@@ -5,17 +5,17 @@ import uuid
 
 import pytest
 
-from core.enums import RoomType, SpatialEntityType
-from core.semantics import ifc_guid
-from core.semantics.ieq import ComfortCategory, IEQAssessment, IEQRequirements
-from core.semantics.mappings import (
+from hvx.core.enums import RoomType, SpatialEntityType
+from hvx.core.semantics import ifc_guid
+from hvx.core.semantics.ieq import ComfortCategory, IEQAssessment, IEQRequirements
+from hvx.core.semantics.mappings import (
     POINT_MAPPINGS,
     ROOM_TYPE_BRICK_CLASS,
     ROOM_USAGE_ALIASES,
     SPATIAL_MAPPINGS,
     brick_class_for_room_type,
 )
-from core.semantics.namespaces import expand
+from hvx.core.semantics.namespaces import expand
 
 rdflib = pytest.importorskip("rdflib")
 
@@ -45,7 +45,7 @@ def test_brick_classes_exist_in_brick_1_4(brick_ontology):
 
 
 def test_extension_classes_are_declared_and_subclass_brick():
-    from core.semantics.brick import load_extension_ontology
+    from hvx.core.semantics.brick import load_extension_ontology
 
     ext = load_extension_ontology()
     for curie in (c for c in _all_classes() if c.startswith("ieq:")):
@@ -129,7 +129,7 @@ def test_assessment_from_en16798_dict():
 
 
 def test_brick_export_import_roundtrip(portfolio):
-    from core.semantics.brick import BrickExporter, BrickImporter
+    from hvx.core.semantics.brick import BrickExporter, BrickImporter
 
     p, b, f, r = portfolio
     r["b0_f0_r1"].ieq_requirements = IEQRequirements(target_category="I", co2_max_ppm=950)
@@ -164,7 +164,7 @@ def test_brick_export_import_roundtrip(portfolio):
 
 def test_brick_export_is_valid_against_brick_shapes(portfolio, brick_ontology):
     """Every rdf:type used by the export resolves to Brick 1.4, ref:, or the ieq: extension."""
-    from core.semantics.brick import BrickExporter, load_extension_ontology
+    from hvx.core.semantics.brick import BrickExporter, load_extension_ontology
 
     graph = BrickExporter().build_graph(*portfolio)
     known = brick_ontology + load_extension_ontology()
@@ -172,47 +172,8 @@ def test_brick_export_is_valid_against_brick_shapes(portfolio, brick_ontology):
         assert (cls, None, None) in known, cls
 
 
-@pytest.fixture
-def ifc_file(tmp_path):
-    pytest.importorskip("ifcopenshell")
-    import ifcopenshell
-    import ifcopenshell.api.aggregate
-    import ifcopenshell.api.pset
-    import ifcopenshell.api.root
-    import ifcopenshell.api.spatial
-    import ifcopenshell.api.unit
-
-    model = ifcopenshell.file(schema="IFC4")
-    create = lambda cls, name: ifcopenshell.api.root.create_entity(model, ifc_class=cls, name=name)  # noqa: E731
-    project = create("IfcProject", "Demo project")
-    ifcopenshell.api.unit.assign_unit(model)
-    site = create("IfcSite", "Site")
-    building = create("IfcBuilding", "HQ")
-    storeys = [create("IfcBuildingStorey", n) for n in ("Basement", "Ground", "First")]
-    for s, z in zip(storeys, (-3.0, 0.0, 3.5)):
-        s.Elevation = z
-    ifcopenshell.api.aggregate.assign_object(model, products=[site], relating_object=project)
-    ifcopenshell.api.aggregate.assign_object(model, products=[building], relating_object=site)
-    ifcopenshell.api.aggregate.assign_object(model, products=storeys, relating_object=building)
-    space = create("IfcSpace", "1.01")
-    space.LongName = "Meeting room 1.01"
-    ifcopenshell.api.aggregate.assign_object(model, products=[space], relating_object=storeys[1])
-    qto = ifcopenshell.api.pset.add_qto(model, product=space, name="Qto_SpaceBaseQuantities")
-    ifcopenshell.api.pset.edit_qto(model, qto=qto, properties={"NetFloorArea": 24.5, "NetVolume": 66.0})
-    for name, props in IEQRequirements(target_category="I", temperature_min_c=21, humidity_max_pct=50, co2_max_ppm=950,
-                                        occupancy_type="meeting_room", design_occupancy=6).to_ifc_psets().items():
-        pset = ifcopenshell.api.pset.add_pset(model, product=space, name=name)
-        ifcopenshell.api.pset.edit_pset(model, pset=pset, properties=props)
-    sensor = create("IfcSensor", "CO2 1.01")
-    sensor.PredefinedType = "CO2SENSOR"
-    ifcopenshell.api.spatial.assign_container(model, products=[sensor], relating_structure=space)
-    path = tmp_path / "demo.ifc"
-    model.write(str(path))
-    return path, space.GlobalId
-
-
 def test_ifc_import(ifc_file):
-    from core.semantics.ifc import load_ifc
+    from hvx.core.semantics.ifc import load_ifc
 
     path, space_guid = ifc_file
     result = load_ifc(path)
@@ -234,7 +195,7 @@ def test_ifc_write_back(ifc_file, tmp_path):
     import ifcopenshell
     import ifcopenshell.util.element as uel
 
-    from core.semantics.ifc import load_ifc, write_ieq_to_ifc
+    from hvx.core.semantics.ifc import load_ifc, write_ieq_to_ifc
 
     path, space_guid = ifc_file
     result = load_ifc(path)
