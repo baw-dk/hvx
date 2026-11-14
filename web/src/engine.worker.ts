@@ -9,6 +9,8 @@ import type { PyodideAPI } from "pyodide";
 declare const self: DedicatedWorkerGlobalScope;
 const base = new URL(import.meta.env.BASE_URL, self.location.origin).href;
 let ready: Promise<PyodideAPI> | null = null;
+let reportReady: Promise<void> | null = null;
+let manifest: { pyodide: string[]; report?: string[]; wheels: string[] };
 
 function post(msg: unknown) {
   self.postMessage(msg);
@@ -18,13 +20,20 @@ async function boot(): Promise<PyodideAPI> {
   post({ type: "progress", step: "runtime" });
   const { loadPyodide } = (await import(/* @vite-ignore */ base + "pyodide/pyodide.mjs")) as typeof import("pyodide");
   const py = await loadPyodide({ indexURL: base + "pyodide/" });
-  const manifest = await (await fetch(base + "py/manifest.json")).json();
+  manifest = await (await fetch(base + "py/manifest.json")).json();
   post({ type: "progress", step: "packages" });
   await py.loadPackage(manifest.pyodide, { messageCallback: () => {} });
   await py.loadPackage(manifest.wheels.map((w: string) => base + "py/" + w), { messageCallback: () => {} });
   post({ type: "progress", step: "hvx" });
-  await py.runPythonAsync("import json\nfrom hvx import tail_label");
+  await py.runPythonAsync("import json\nfrom hvx import tail_label, building_csv\nfrom hvx.core import schedules");
   return py;
+}
+
+// The report needs scipy and jinja2 (about 13 MB more): fetched the first time a report is made.
+async function loadReport(py: PyodideAPI) {
+  post({ type: "progress", step: "report" });
+  await py.loadPackage(manifest.report ?? [], { messageCallback: () => {} });
+  await py.runPythonAsync("import hvx.reporting");
 }
 
 self.onmessage = async (event: MessageEvent) => {
@@ -47,6 +56,21 @@ self.onmessage = async (event: MessageEvent) => {
         "_o = dict(_p.get('options') or {})",
         "json.dumps(tail_label.label_from_csv(_p['csv'], columns=_p.get('columns'), **_o), default=str)",
       ].join("\n");
+    } else if (type === "labels") {
+      code = [
+        "_p = json.loads(payload_json)",
+        "json.dumps(building_csv.labels(_p['rooms'], _p.get('building_name'), **(_p.get('options') or {})), default=str)",
+      ].join("\n");
+    } else if (type === "report") {
+      reportReady ??= loadReport(py);
+      await reportReady;
+      code = [
+        "_p = json.loads(payload_json)",
+        "_r = building_csv.report(_p['rooms'], **(_p.get('options') or {}))",
+        "json.dumps({'html': _r['html'], 'data': _r['data']}, default=str)",
+      ].join("\n");
+    } else if (type === "holidays") {
+      code = "_p = json.loads(payload_json)\njson.dumps(schedules.danish_school_holidays(_p['years']))";
     } else if (type === "hours") {
       code = "_p = json.loads(payload_json)\njson.dumps(tail_label.default_hours(_p['building_type']))";
     } else {

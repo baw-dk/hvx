@@ -177,6 +177,7 @@ def assess(
     persons: Optional[float] = None,
     spot_values: Optional[Dict[str, float]] = None,
     name: Optional[str] = None,
+    schedule: Union[None, OccupancySchedule, Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     TAIL rating of a measurement frame over its occupied hours; JSON-ready dict.
@@ -184,11 +185,17 @@ def assess(
     building_type: "office", "hotel" or "school" (TAIL profile). mechanical_cooling=False uses
     the adaptive temperature bands outside the heating season (needs an outdoor temperature
     column). spot_values: single measurements such as {"reverberation_time": 0.6,
-    "daylight_factor": 2.4, "radon": 80}.
+    "daylight_factor": 2.4, "radon": 80}. schedule: an :class:`OccupancySchedule` (or its
+    ``to_dict`` data) for anything the simple hours can't say: different hours per day, breaks,
+    school holidays, closed days; it replaces occupied_from/to, weekdays and all_hours.
     """
     building_type = (building_type or "office").lower()
     hours = default_hours(building_type)
-    if all_hours:
+    if isinstance(schedule, OccupancySchedule):
+        pass
+    elif schedule:  # advanced schedule as JSON-like data (see OccupancySchedule.from_dict)
+        schedule = OccupancySchedule.from_dict(schedule).with_holidays(holiday_periods)
+    elif all_hours:
         schedule = OccupancySchedule(always=True, public_holidays=False)
     else:
         schedule = OccupancySchedule(
@@ -252,12 +259,23 @@ def assess(
         "not_rated": dict(result.not_rated),
         "extensions": {p.parameter: p.rating_label for p in result.extensions},
         "coverage": cov,
-        "occupied": {"description": schedule.describe(), "start": schedule.start, "end": schedule.end,
-                     "weekdays": list(schedule.weekdays), "all_hours": bool(schedule.always),
+        "occupied": {"description": schedule.describe(), **_simple_hours(schedule),
+                     "all_hours": bool(schedule.always), "schedule": schedule.to_dict(),
+                     "groups": [{"days": list(d), "hours": [list(h) for h in hs]} for d, hs in schedule.day_groups()],
                      "hours": round(float(_durations(frame.index)[mask].sum()), 0),
                      "samples": int(len(occupied)), "building_type": building_type, "country": country},
         "warnings": warnings,
     }
+
+
+def _simple_hours(schedule: OccupancySchedule) -> Dict[str, Any]:
+    """start/end/weekdays of a schedule in its simple form (for advanced schedules: the
+    first and last clock times of the busiest days, and every day with any period)."""
+    if not schedule.periods:
+        return {"start": schedule.start, "end": schedule.end, "weekdays": list(schedule.weekdays)}
+    groups = schedule.day_groups()
+    days, hours = max(groups, key=lambda g: len(g[0]))
+    return {"start": hours[0][0], "end": hours[-1][1], "weekdays": sorted({d for g in groups for d in g[0]})}
 
 
 def _column_for(frame: pd.DataFrame, parameter: str) -> Optional[str]:

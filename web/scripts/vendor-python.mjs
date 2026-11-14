@@ -23,8 +23,10 @@ const outPyodide = join(web, "public", "pyodide");
 const outPy = join(web, "public", "py");
 const python = process.env.PYTHON || (existsSync(join(repo, ".venv", "bin", "python")) ? join(repo, ".venv", "bin", "python") : "python3");
 
-// What hvx.tail_label imports (no scipy): see src/hvx/tail_label.py
+// What hvx.tail_label and hvx.building_csv.labels import (no scipy)
 const WANTED = ["numpy", "pandas", "pydantic", "pyyaml", "python-dateutil", "pytz"];
+// Loaded only when a report is asked for: what hvx.reporting adds (hvx.building_csv.report)
+const REPORT = ["scipy", "jinja2", "markupsafe"];
 
 async function download(url, file) {
   const res = await fetch(url);
@@ -48,15 +50,21 @@ for (const f of readdirSync(pyodideDir)) {
 const lock = JSON.parse(readFileSync(join(outPyodide, "pyodide-lock.json"), "utf8"));
 const norm = (n) => n.toLowerCase().replace(/_/g, "-");
 const byName = new Map(Object.entries(lock.packages).map(([k, v]) => [norm(k), v]));
-const needed = new Set();
-const visit = (name) => {
-  const pkg = byName.get(norm(name));
-  if (!pkg) throw new Error(`Pyodide has no package ${name}`);
-  if (needed.has(pkg.name)) return;
-  needed.add(pkg.name);
-  for (const dep of pkg.depends || []) visit(dep);
+const closure = (names, have = new Set()) => {
+  const out = new Set();
+  const visit = (name) => {
+    const pkg = byName.get(norm(name));
+    if (!pkg) throw new Error(`Pyodide has no package ${name}`);
+    if (out.has(pkg.name) || have.has(pkg.name)) return;
+    out.add(pkg.name);
+    for (const dep of pkg.depends || []) visit(dep);
+  };
+  names.forEach(visit);
+  return out;
 };
-WANTED.forEach(visit);
+const core = closure(WANTED);
+const report = closure(REPORT, core);
+const needed = new Set([...core, ...report]);
 let bytes = 0;
 for (const name of needed) {
   const pkg = byName.get(norm(name));
@@ -73,5 +81,5 @@ const wheel = pypi.urls.find((u) => u.packagetype === "bdist_wheel" && u.filenam
 if (!wheel) throw new Error("No pure-Python wheel for holidays on PyPI");
 await download(wheel.url, join(outPy, wheel.filename));
 const wheels = readdirSync(outPy).filter((f) => f.endsWith(".whl"));
-writeFileSync(join(outPy, "manifest.json"), JSON.stringify({ pyodide: [...needed].sort(), wheels }, null, 2));
+writeFileSync(join(outPy, "manifest.json"), JSON.stringify({ pyodide: [...core].sort(), report: [...report].sort(), wheels }, null, 2));
 console.log(`Wheels: ${wheels.join(", ")}`);

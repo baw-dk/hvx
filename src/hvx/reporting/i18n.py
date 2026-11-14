@@ -226,6 +226,7 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "{days} {start}–{end}": "{days} kl. {start}–{end}",
         ", excluding public holidays": ", ekskl. helligdage",
         " and {n} holiday period(s)": " og {n} ferieperiode(r)",
+        " and {n} closed day(s)": " og {n} lukkedag(e)",
     }
 }
 
@@ -284,14 +285,19 @@ def describe_schedule(schedule, t: Translator) -> str:
     """Localised :meth:`OccupancySchedule.describe`."""
     if schedule.always:
         return t("all hours (24/7 occupancy)")
-    days = ", ".join(t.weekday(d) for d in schedule.weekdays)
-    if tuple(schedule.weekdays) == (0, 1, 2, 3, 4):
-        days = f"{t.weekday(0)}–{t.weekday(4)}"
-    text = t("{days} {start}–{end}", days=days, start=schedule.start, end=schedule.end)
+    parts = []
+    for days, hours in schedule.day_groups():
+        span = t.weekday(days[0]) if len(days) == 1 else f"{t.weekday(days[0])}–{t.weekday(days[-1])}"
+        first, *more = hours
+        parts.append(t("{days} {start}–{end}", days=span, start=first[0], end=first[1])
+                     + "".join(f", {a}–{b}" for a, b in more))
+    text = "; ".join(parts)
     if schedule.public_holidays:
         text += t(", excluding public holidays")
     if schedule.holiday_periods:
         text += t(" and {n} holiday period(s)", n=len(schedule.holiday_periods))
+    if getattr(schedule, "closed_days", ()):
+        text += t(" and {n} closed day(s)", n=len(schedule.closed_days))
     return text
 
 

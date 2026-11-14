@@ -158,6 +158,9 @@ function DimensionRule({ x0, x1, y, label }: { x0: number; x1: number; y: number
   );
 }
 
+// Long schedules (several periods per day) are shortened to fit the label's footer.
+const fit = (text: string, max: number) => (text.length > max ? text.slice(0, max - 1).trimEnd() + "…" : text);
+
 export const TailSticker = React.forwardRef<SVGSVGElement, { label: Label; lang: Lang; embedFonts?: boolean }>(({ label, lang, embedFonts = true }, ref) => {
   const t = STRINGS[lang];
   const uid = React.useId().replace(/[^a-zA-Z0-9]/g, "");
@@ -176,7 +179,7 @@ export const TailSticker = React.forwardRef<SVGSVGElement, { label: Label; lang:
       <text x={pad} y={58} fontSize={38} fontWeight={700} letterSpacing="-0.03em" fill={INK} fontFamily="Space Grotesk">baw</text>
       <DimensionRule x0={pad + 3} x1={pad + 78} y={74} />
       <text x={W - pad} y={40} textAnchor="end" fontSize={9.5} fontWeight={600} letterSpacing="0.08em" fill={MUTED} fontFamily="Inter">
-        {t.eyebrow.toUpperCase()}
+        {(label.kind === "building" ? t.buildingEyebrow(label.rooms?.length ?? 0) : t.eyebrow).toUpperCase()}
       </text>
       <text x={W - pad} y={70} textAnchor="end" fontSize={30} fontWeight={700} letterSpacing="-0.02em" fill={INK} fontFamily="Space Grotesk">TAIL</text>
       <line x1={pad} y1={98} x2={W - pad} y2={98} stroke={LINE} strokeWidth={1} />
@@ -208,11 +211,11 @@ export const TailSticker = React.forwardRef<SVGSVGElement, { label: Label; lang:
         {(label.name || t.labelTitle).slice(0, 44)}
       </text>
       <text x={pad} y={555} fontSize={10.5} fill={MUTED} fontFamily="Inter">{t.profiles[label.profile]}</text>
-      <text x={pad} y={571} fontSize={10.5} fill={MUTED} fontFamily="Inter">
-        {`${formatHours(label.occupied, lang)} · ${hours} ${t.hoursUnit} ${t.assessed}`}
-      </text>
-      <text x={W - pad} y={571} textAnchor="end" fontSize={9} fontWeight={500} letterSpacing="0.04em" fill={MUTED} fontFamily="JetBrains Mono">
+      <text x={W - pad} y={555} textAnchor="end" fontSize={9} fontWeight={500} letterSpacing="0.04em" fill={MUTED} fontFamily="JetBrains Mono">
         hvx · CVR 46539214
+      </text>
+      <text x={pad} y={571} fontSize={10.5} fill={MUTED} fontFamily="Inter">
+        {`${fit(formatHours(label.occupied, lang), 44)} · ${hours} ${t.hoursUnit} ${t.assessed}`}
       </text>
     </svg>
   );
