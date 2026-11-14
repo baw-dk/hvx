@@ -6,7 +6,7 @@
 # (or ReportConfig(branding="baw")). Without --brand, reports are white-label.
 
 name: baw            # wordmark as in the BAW logo (lowercase)
-legal_name: "BAW – Bruno Adam Wallon"   # BAW design system: the practice of Bruno Adam Wallon
+legal_name: "BAW – Bruno Adam"   # the practice of Bruno Adam
 cvr: "46539214"          # 8-digit CVR number
 address: "Copenhagen"
 email: ""

@@ -44,7 +44,7 @@ const en = {
   method: "How the rating works",
   methodText: "Each parameter is rated I (best) to IV over the assessed hours, a domain takes its worst parameter, and the overall rating its worst domain. Offices and hotels follow the TAIL scheme (Wargocki et al. 2021); schools follow the TAIL scheme for schools (Tran 2024), with classroom noise limits, NO₂ and reverberation time.",
   error: "Could not rate the file",
-  footer: "baw · Bruno Adam Wallon · CVR 46539214 · Copenhagen",
+  footer: "baw · Bruno Adam · CVR 46539214 · Copenhagen",
   source: "Source code",
 };
 type Dict = typeof en;
@@ -90,7 +90,7 @@ const da: Dict = {
   method: "Sådan vurderes der",
   methodText: "Hver parameter vurderes fra I (bedst) til IV over den vurderede tid, et domæne får sin dårligste parameter og den samlede vurdering det dårligste domæne. Kontorer og hoteller følger TAIL (Wargocki m.fl. 2021); skoler følger TAIL for skoler (Tran 2024) med støjgrænser for klasselokaler, NO₂ og efterklangstid.",
   error: "Filen kunne ikke vurderes",
-  footer: "baw · Bruno Adam Wallon · CVR 46539214 · København",
+  footer: "baw · Bruno Adam · CVR 46539214 · København",
   source: "Kildekode",
 };
 
