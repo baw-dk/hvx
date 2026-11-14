@@ -224,6 +224,7 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
             # TAIL on this season's slice; temperature bands still follow each sample's month.
             season_result.tail_rating = tail.get("overall_rating_label")
             season_result.tail = {
+                "profile": tail.get("profile"),
                 "overall": tail.get("overall_rating_label"),
                 "domains": {k: v.get("rating_label") for k, v in (tail.get("domains") or {}).items() if isinstance(v, dict)},
                 "parameters": {k: v.get("rating") for k, v in (tail.get("parameters") or {}).items() if isinstance(v, dict)},
@@ -477,7 +478,9 @@ def combine_tail(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
         names = sorted({k for p in parts for k in (p.get(key) or {})})
         return {k: _worst_label((p.get(key) or {}).get(k) for p in parts) for k in names}
 
+    profiles = [p.get("profile") for p in parts if p.get("profile")]
     combined: Dict[str, Any] = {
+        "profile": profiles[0] if profiles else None,
         "overall": _worst_label(p.get("overall") for p in parts),
         "domains": worst_of("domains"),
         "parameters": worst_of("parameters"),

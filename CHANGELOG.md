@@ -16,6 +16,15 @@ All notable changes to this project are documented here. The format follows
   outside the heating season temperature limits follow the running mean of daily outdoor
   temperature (computed from all hours, not the assessed slice). Seasons show "(adaptive)".
 - Home Assistant integration brand icon (`custom_components/hvx_ieq/brand/`), required by HACS.
+- TAIL profiles for offices, hotels and schools. Schools follow the TAIL rating scheme for
+  schools (Tran 2024): classroom noise 30/34/38 dB(A), reverberation time, NO₂, PM2.5 5/15 µg/m³,
+  CO₂ by time shares, illuminance ≥ 500/300/200 lx, school hours 08–17. Hotels are rated over
+  sleeping hours (22–06), offices 09–17 (predicTAIL). Adaptive temperature bands (TAIL Table 2)
+  for buildings without mechanical cooling. Buildings are rated from their rooms as the sources
+  prescribe (paper Eq. 1; schools: mean of the classrooms' domain ratings).
+- `hvx.tail_label`: TAIL label from one CSV of measurements (column detection in English and
+  Danish, decimal commas, outdoor temperature for the adaptive bands, spot values).
+- Occupancy schedules can span midnight (e.g. hotel sleeping hours).
 - TAIL in reports: a network from the portfolio to its buildings with each building's four domain
   ratings, and a page per building with its TAIL donut, key figures and top actions. In the donut a
   domain's unmeasured parameters form one grey segment instead of one sliver each.

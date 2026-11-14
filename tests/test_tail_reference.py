@@ -468,7 +468,7 @@ def test_instant_values_and_rating_enum():
     assert TAILRating.from_label("III") is TAILRating.FAIR
 
 
-def test_typical_tail_is_an_hvx_summary_and_ignores_extensions():
+def test_group_rating_follows_tail_eq1_and_ignores_extensions():
     from hvx.reporting.aggregate import typical_tail
     from hvx.reporting.analysis import combine_tail
 
@@ -478,8 +478,7 @@ def test_typical_tail_is_an_hvx_summary_and_ignores_extensions():
     ]
     group = typical_tail(rooms)
     assert group["parameters"] == {"co2": "II"} and group["overall"] == "II"
-    assert "hvx summary" in group["basis"]
-    assert "not* a TAIL building" in typical_tail.__doc__
+    assert "Eq. 1" in group["basis"]  # mean of (2, 1) = 1.5 -> II, as the paper's bins say
     seasons = combine_tail([
         {"overall": "I", "domains": {"iaq": "I"}, "parameters": {"co2": "I"}, "extensions": {"pm10": "II"}},
         {"overall": "III", "domains": {"iaq": "III"}, "parameters": {"co2": "III"}, "extensions": {"pm10": "I"}},
@@ -488,12 +487,12 @@ def test_typical_tail_is_an_hvx_summary_and_ignores_extensions():
     assert "pm10" not in seasons["parameters"]
 
 
-def test_report_caption_calls_the_group_rating_an_hvx_summary(portfolio):
+def test_report_caption_names_the_tail_group_rule(portfolio):
     from hvx.reporting import ReportBuilder, ReportConfig, render
 
     html = render(ReportBuilder(ReportConfig(parallel_backend="serial", include_simulations=False)).build(*portfolio), "html")
-    assert "Typical room (hvx summary)" in html
-    assert "not a TAIL building rating" in html
+    assert "Rated from its rooms (TAIL)" in html
+    assert "Wargocki et al. 2021" in html and "Tran 2024" in html
 
 
 def test_single_winter_season_report_still_uses_bands_per_month():

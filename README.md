@@ -321,10 +321,26 @@ script's line numbers.
   share of time within 300–500 lx (offices) or ≥ 100 lx (hotels); **daylight factor**,
   **ventilation** (from persons and floor area) and **mould** (visible area): worst value.
 - **PM10 and VOC** are not TAIL parameters: rated as hvx extensions, outside the domains.
+- **Building types.** Three profiles (`profiles` in the config), picked from the building type:
+
+  | | Offices | Hotels | Schools |
+  |---|---|---|---|
+  | Source | TAIL paper, tail.R | TAIL paper, tail.R | TAIL for schools (M.-T. Tran, PhD thesis, IMT Atlantique 2024) |
+  | Assessed hours | Mon–Fri 09–17 | every night 22–06 | Mon–Fri 08–17 |
+  | Noise (P5) | small office 30/35/40, open office 35/40/45 dB(A) | 25/30/35 dB(A) | classroom 30/34/38 dB(A) |
+  | Added parameters | – | – | reverberation time (by classroom volume), NO₂ |
+  | CO₂ | P95 | P95 | time shares (≥ 94 %) |
+  | PM2.5 | < 10 / < 25 µg/m³ | < 10 / < 25 µg/m³ | < 5 / < 15 µg/m³ (WHO 2021) |
+  | Illuminance | share of time 300–500 lx | share of night ≥ 100 lx | ≥ 500 / 300 / 200 lx (time shares) |
+  | Building rating | mean of the rooms' parameter ratings (paper Eq. 1) | same | mean of the classrooms' domain ratings |
+
+- **No mechanical cooling** (`mechanical_cooling: false` and outdoor temperature): outside the
+  heating season the temperature bands follow the adaptive model of the TAIL paper (Table 2),
+  0.33·θrm + 18.8 °C with Green −3/+2, Yellow −4/+3, Orange −5/+4 K.
 - In reports TAIL runs per room on the occupied hours the report selected (no second
-  opening-hours filter). TAIL itself rates a building from the pooled data of all its rooms;
-  the report's building figure is an hvx summary instead: the *typical room*, each parameter
-  the rounded mean of the rooms' TAIL ratings.
+  opening-hours filter); buildings and portfolios are rated from their rooms with the profile's rule.
+- **TAIL label from one CSV**: `hvx.tail_label.label_from_csv(text, building_type="school")`
+  (light enough to run in the browser; used by the web app in `web/`).
 
 ### 3. Ventilation Simulation Model (`src/hvx/simulations/models/ventilation/model.py`)
 

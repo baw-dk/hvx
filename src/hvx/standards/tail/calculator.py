@@ -177,6 +177,7 @@ class TAILOverallResult:
     parameter_results: List[TAILParameterResult]
     extensions: List[TAILParameterResult] = field(default_factory=list)
     not_rated: Dict[str, str] = field(default_factory=dict)  # parameter -> why it was not rated
+    profile: str = "office"  # building-type profile used: office, hotel or school
 
 
 Outcome = Union[TAILParameterResult, str, None]  # result, reason for not rating, or no data
@@ -233,6 +234,12 @@ class TAILCalculator:
         "light": "illuminance",
         "daylightfactor": "daylight_factor",
         "df": "daylight_factor",
+        "no2": "no2",
+        "nitrogendioxide": "no2",
+        "reverberationtime": "reverberation_time",
+        "rt": "reverberation_time",
+        "t20": "reverberation_time",
+        "t30": "reverberation_time",
     }
 
     PARAMETER_CATEGORIES = {
@@ -248,9 +255,13 @@ class TAILCalculator:
         "noise": TAILCategory.ACOUSTIC,
         "illuminance": TAILCategory.LUMINOUS,
         "daylight_factor": TAILCategory.LUMINOUS,
+        # school profile only (Tran 2024); elsewhere NO2 is an extension and RT is not rated
+        "no2": TAILCategory.IAQ,
+        "reverberation_time": TAILCategory.ACOUSTIC,
     }
+    PROFILE_ONLY = ("no2", "reverberation_time")
     # Not TAIL parameters: rated as hvx extensions, outside the domains (config.yaml `extensions`)
-    EXTENSION_CATEGORIES = {"pm10": TAILCategory.IAQ, "voc": TAILCategory.IAQ}
+    EXTENSION_CATEGORIES = {"pm10": TAILCategory.IAQ, "voc": TAILCategory.IAQ, "no2": TAILCategory.IAQ}
 
     # ------------------------------------------------------------------ public API
     @classmethod
@@ -301,6 +312,14 @@ class TAILCalculator:
         if occupancy_filtered is None:
             occupancy_filtered = bool(metadata.get("occupancy_filtered", False))
         cfg = cls.config(thresholds)
+        profile_name, profile = cls.profile_for(metadata.get("building_type"), cfg)
+        if profile.get("parameters"):
+            cfg["parameters"] = _deep_merge(cfg["parameters"], profile["parameters"])
+            if thresholds:  # caller overrides still win over the profile
+                cfg["parameters"] = _deep_merge(cfg["parameters"], thresholds)
+        metadata.setdefault("profile", profile_name)
+        if profile.get("default_room_type") and not metadata.get("room_type"):
+            metadata["room_type"] = profile["default_room_type"]
         prepared = cls._prepare_series(timeseries_data, metadata, occupancy_filtered)
 
         parameter_results: List[TAILParameterResult] = []
@@ -311,7 +330,12 @@ class TAILCalculator:
             normalized = cls._normalize_parameter_name(param_name)
             if normalized in seen:
                 continue
-            if normalized in cls.PARAMETER_CATEGORIES:
+            if normalized in cls.PROFILE_ONLY and normalized not in cfg["parameters"]:
+                if normalized in cls.EXTENSION_CATEGORIES:
+                    outcome = cls._evaluate_extension(normalized, series, cfg)
+                else:
+                    outcome = f"Not rated: {normalized} is part of the TAIL scheme for schools only."
+            elif normalized in cls.PARAMETER_CATEGORIES:
                 evaluator = cls._get_parameter_evaluator(normalized)
                 outcome = evaluator(series, metadata, cfg)
             elif normalized in cls.EXTENSION_CATEGORIES:
@@ -346,7 +370,19 @@ class TAILCalculator:
             parameter_results=parameter_results,
             extensions=extensions,
             not_rated=not_rated,
+            profile=profile_name,
         )
+
+    @classmethod
+    def profile_for(cls, building_type: Any, cfg: Optional[Dict[str, Any]] = None) -> Tuple[str, Dict[str, Any]]:
+        """("office" | "hotel" | "school", profile config) for a building type; offices by default."""
+        cfg = cfg or load_config()
+        kind = normalize_type(building_type)
+        profiles = cfg.get("profiles") or {}
+        for name, profile in profiles.items():
+            if kind in {normalize_type(t) for t in profile.get("building_types") or []}:
+                return name, profile
+        return "office", profiles.get("office", {})
 
     # ------------------------------------------------------------------ preparation
     @staticmethod
@@ -401,6 +437,8 @@ class TAILCalculator:
             "noise": cls._evaluate_noise,
             "illuminance": cls._evaluate_illuminance,
             "daylight_factor": cls._evaluate_daylight_factor,
+            "no2": cls._evaluate_no2,
+            "reverberation_time": cls._evaluate_reverberation_time,
         }
         return evaluators[parameter]
 
@@ -433,10 +471,17 @@ class TAILCalculator:
             heating = np.full(len(values), hint == "heating")
             season_basis = f"season hint '{hint}' (no timestamps)"
         bands = pcfg["bands"]
+        non_heating_colors = cls._band_colors(values, bands["non_heating"])  # l.95-100
+        adaptive = cls._adaptive_colors(values, metadata, cfg) if isinstance(values.index, pd.DatetimeIndex) else None
+        adaptive_used = adaptive is not None and bool(((~heating) & (adaptive != "")).any())
+        if adaptive is not None:
+            # Buildings without mechanical cooling (TAIL paper Table 2): adaptive bands outside
+            # the heating season wherever the running mean outdoor temperature is known.
+            non_heating_colors = np.where(adaptive != "", adaptive, non_heating_colors)
         colors = np.where(
             heating,
             cls._band_colors(values, bands["heating"]),  # l.89-94
-            cls._band_colors(values, bands["non_heating"]),  # l.95-100
+            non_heating_colors,
         )
         counts = cls._color_counts(colors)
         rating = cls._time_share_rating(counts, cfg["time_share_rule"])  # l.357-369
@@ -453,8 +498,50 @@ class TAILCalculator:
                 "heating_samples": int(heating.sum()),
                 "non_heating_samples": int((~heating).sum()),
                 "bands": bands,
+                "adaptive": adaptive_used,
             },
         )
+
+    @classmethod
+    def running_mean_outdoor(cls, daily: pd.Series, alpha: float = 0.8, days: int = 30) -> pd.Series:
+        """theta_rm per day from daily mean outdoor temperatures: (1 - alpha) * sum(alpha^i * theta_ed-1-i)
+        over the preceding days (normalised over the days available, up to ``days``)."""
+        daily = daily.dropna().sort_index()
+        values = daily.to_numpy(dtype=float)
+        out = np.full(len(values), np.nan)
+        for i in range(1, len(values)):
+            prev = values[max(0, i - days):i][::-1]
+            w = alpha ** np.arange(len(prev))
+            out[i] = float((w * prev).sum() / w.sum())
+        return pd.Series(out, index=daily.index)
+
+    @classmethod
+    def _adaptive_colors(cls, values: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[np.ndarray]:
+        """Per sample: Green/Yellow/Orange/Red from the adaptive bands, "" where they don't apply
+        (no running mean, or above its validity range). None if the building has cooling or no
+        outdoor temperature."""
+        if metadata.get("mechanical_cooling") is not False:
+            return None
+        raw = metadata.get("outdoor_daily_mean_temperature")
+        if isinstance(raw, dict) and raw:
+            daily = pd.Series(list(raw.values()), index=pd.to_datetime(list(raw.keys())), dtype=float)
+        elif isinstance(raw, pd.Series) and not raw.empty:
+            daily = raw.resample("D").mean() if isinstance(raw.index, pd.DatetimeIndex) else raw
+        else:
+            return None
+        acfg = cfg["adaptive_temperature"]
+        rm_daily = cls.running_mean_outdoor(daily)
+        rm = rm_daily.reindex(values.index.normalize()).to_numpy(dtype=float)
+        lo_rm = np.clip(rm, *acfg["lower_valid"])
+        hi_rm = np.clip(rm, *acfg["upper_valid"])
+        v = values.to_numpy(dtype=float)
+        colors = np.full(len(v), "red", dtype=object)
+        for color in ("orange", "yellow", "green"):  # narrowest band last wins
+            below, above = acfg["offsets"][color]
+            inside = (v >= 0.33 * lo_rm + 18.8 + below) & (v <= 0.33 * hi_rm + 18.8 + above)
+            colors[inside] = color
+        colors[np.isnan(rm) | (rm > acfg["upper_valid"][1])] = ""
+        return colors.astype(str)
 
     @classmethod
     def _evaluate_humidity(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
@@ -496,8 +583,16 @@ class TAILCalculator:
         values = values.where(values >= outdoor, outdoor)  # l.153
         p95 = float(values.quantile(pcfg["percentile"] / 100.0))  # l.157 (R type 7 = pandas linear)
         limits = {c: outdoor + float(v) for c, v in pcfg["above_outdoor"].items()}  # 970/1220/1770 (l.163-166)
-        color = cls._color_at_most(p95, limits)
         counts = cls._color_counts(np.array([cls._color_at_most(v, limits) for v in values]))
+        if pcfg.get("rule") == "time_share":
+            # TAIL for schools (Tran 2024, Fig. 8): >= 94 % of the time within the category
+            rating = cls._time_share_rating(counts, cfg["time_share_rule"])
+            return cls._build_parameter_result(
+                parameter="co2", category=TAILCategory.IAQ, rating=rating, counts=counts,
+                sample_count=int(values.size), summary_value=round(p95, 2),
+                metadata={"rule": "time shares (TAIL for schools, Fig. 8)", "outdoor_ppm": outdoor, "limits_ppm": limits},
+            )
+        color = cls._color_at_most(p95, limits)
         return cls._build_parameter_result(
             parameter="co2",
             category=TAILCategory.IAQ,
@@ -689,6 +784,20 @@ class TAILCalculator:
         if values.empty:
             return None
         values = values.where(values >= pcfg["floor"], float(pcfg["floor"]))  # l.292
+        if pcfg.get("rule") == "time_share_min_lux":
+            # TAIL for schools (Table 9): total illuminance >= 500 / 300 / 200 lx. The thesis rates
+            # spot measurements; for continuous logs hvx applies the >= 94 % time-share rule.
+            lim = pcfg["min_lux"]
+            v = values.to_numpy()
+            colors = np.where(v >= lim["green"], "green", np.where(v >= lim["yellow"], "yellow",
+                                                                    np.where(v >= lim["orange"], "orange", "red")))
+            counts = cls._color_counts(colors)
+            return cls._build_parameter_result(
+                parameter="illuminance", category=TAILCategory.LUMINOUS,
+                rating=cls._time_share_rating(counts, cfg["time_share_rule"]), counts=counts,
+                sample_count=int(values.size), summary_value=round(float(values.median()), 0),
+                metadata={"rule": "TAIL for schools, Table 9 (time shares)", "min_lux": lim},
+            )
         rule = cls._building_rule(metadata, cfg, pcfg)
         rcfg = pcfg[rule]
         if rule == "hotel":
@@ -747,6 +856,36 @@ class TAILCalculator:
         )
 
     # ------------------------------------------------------------------ hvx extensions
+    @classmethod
+    def _evaluate_no2(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        return cls._evaluate_pollutant("no2", series, cfg)  # TAIL for schools, Table 8
+
+    @classmethod
+    def _evaluate_reverberation_time(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        """TAIL for schools, Table 7: by classroom volume; III has no criteria, so II -> IV."""
+        pcfg = cfg["parameters"]["reverberation_time"]
+        values = cls._numeric_series(series)
+        if values.empty:
+            return None
+        volume = cls._first_number(metadata, ("volume_m3", "room_volume_m3"))
+        if volume is None:
+            return "Not rated: reverberation time limits depend on the classroom volume (volume_m3)."
+        rt = float(values.median())
+        bands = pcfg["small"] if volume < float(pcfg["small_room_volume_m3"]) else pcfg["large"]
+        if bands["green"][0] <= rt <= bands["green"][1]:
+            color = "green"
+        elif bands["yellow"][0] <= rt <= bands["yellow"][1]:
+            color = "yellow"
+        else:
+            color = "red"
+        counts = {c: 0 for c in COLORS}
+        counts[color] = 1
+        return cls._build_parameter_result(
+            parameter="reverberation_time", category=TAILCategory.ACOUSTIC, rating=cls.COLOR_TO_RATING[color],
+            counts=counts, sample_count=int(values.size), summary_value=round(rt, 2),
+            metadata={"rule": "TAIL for schools, Table 7", "volume_m3": volume, "bands_s": bands},
+        )
+
     @classmethod
     def _evaluate_extension(cls, parameter: str, series: pd.Series, cfg: Dict[str, Any]) -> Outcome:
         pcfg = (cfg.get("extensions") or {}).get(parameter)
