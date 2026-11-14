@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 
 from hvx.core.data_quality import analyze_dataframe_quality
@@ -222,7 +223,9 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
         report.seasons.append(season_result)
 
     _combine(report, assessments, config, df)
-    _br18(report, df, room, country, building_type)
+    blanked = full.copy()
+    blanked.loc[~full.index.isin(df.index)] = np.nan  # unassessed samples stay in the timeline, without values
+    _br18(report, blanked, room, country, building_type)
 
     # --- simulations on the full period -------------------------------------
     if config.include_simulations:
@@ -347,13 +350,14 @@ def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Ro
         heating = pd.Series(df.index.isin(season_slice(df, "winter", country).index), index=df.index)
     try:
         scenarios = ScenarioImpactModel(co2_limit=limits.co2_ppm, temp_band=heat_band).estimate_impacts(
-            df, ventilation, heating=heating
+            df, ventilation, heating=heating, hours=_sample_hours(full).reindex(df.index).fillna(0.0)
         )
         report.scenarios = [s for s in (scenarios.as_dict().get(k) for k in ("ventilation", "solar_shading")) if s]
     except Exception as exc:
         report.warnings.append(f"Scenario estimate failed: {exc}")
     try:
-        evidence = RoomEvidence.from_frame(df, _sample_hours(df), heating, limits.co2_ppm, heat_band, cool_band)
+        hours = _sample_hours(full).reindex(df.index).fillna(0.0)  # durations from the full timeline
+        evidence = RoomEvidence.from_frame(df, hours, heating, limits.co2_ppm, heat_band, cool_band)
         if scenarios is not None:
             if scenarios.ventilation is not None:
                 evidence.airflow_factor = scenarios.ventilation.metrics.get("airflow_factor")
@@ -378,6 +382,8 @@ def _br18(report: RoomReport, df: pd.DataFrame, room: Room, country: str, buildi
         return
     if building_type not in (applicability.get("building_types") or [building_type]):
         return
+    # ``df`` keeps every sample's own timestamp with unassessed (unoccupied) values blanked, so
+    # each sample's duration is the real sampling step, not the gap to the next morning.
     series, stamps = frame_to_timeseries(df[[c for c in ("temperature", "co2") if c in df.columns]])
     if not series:
         return

@@ -121,7 +121,9 @@ class ScenarioImpactModel:
             },
         )
 
-    def solar_shading_scenario(self, df: pd.DataFrame, heating: Optional[pd.Series] = None) -> Optional[ScenarioResult]:
+    def solar_shading_scenario(self, df: pd.DataFrame, heating: Optional[pd.Series] = None,
+                               hours: Optional[pd.Series] = None) -> Optional[ScenarioResult]:
+        """``hours``: duration of each sample (from the full timeline); default: from ``df``."""
         solar_col = next((c for c in ("solar_irradiance", "solar_radiation") if c in df), None)
         if "temperature" not in df or solar_col is None or "outdoor_temperature" not in df:
             return None
@@ -140,7 +142,7 @@ class ScenarioImpactModel:
         except np.linalg.LinAlgError:
             return None
         solar_k, t_stat = float(coef[1]), float(coef[1] / se[1]) if se[1] > 0 else 0.0
-        hours = _hours(data.index)
+        hours = hours.reindex(data.index).fillna(0.0) if hours is not None else _hours(data.index)
         before = float(hours[data["temperature"] > self.overheating_limit].sum())
         if solar_k <= 0 or t_stat < 3.0:
             after = before
@@ -170,6 +172,7 @@ class ScenarioImpactModel:
         ventilation_result: Optional[VentilationRateResult] = None,
         heating: Optional[pd.Series] = None,
         background_co2: Optional[float] = None,
+        hours: Optional[pd.Series] = None,
     ) -> ScenarioImpactSummary:
         """``df``: occupied samples (incl. climate columns). ``heating``: True in heating-season
         samples. ``background_co2``: from the CO₂ decay analysis if available."""
@@ -180,7 +183,7 @@ class ScenarioImpactModel:
             base_temperature_compliance=self._temperature_compliance(df),
             base_co2_compliance=self._co2_compliance(df),
             ventilation=self.airflow_scenario(df, float(background) if background else 420.0),
-            solar_shading=self.solar_shading_scenario(df, heating),
+            solar_shading=self.solar_shading_scenario(df, heating, hours),
         )
 
 

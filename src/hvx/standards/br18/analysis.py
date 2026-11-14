@@ -49,8 +49,10 @@ def _series_from_timeseries(
 
     if timestamps and len(series) == len(timestamps):
         idx = pd.to_datetime(timestamps, errors="coerce")
-        valid_mask = (~idx.isna()) & (~series.isna().to_numpy())
-        if valid_mask.any():
+        # Keep missing values (NaN): each sample's duration must come from the real sampling
+        # step, so blanked or missing samples stay in the timeline and are skipped when rated.
+        valid_mask = ~idx.isna()
+        if valid_mask.any() and series[valid_mask].notna().any():
             filtered = series[valid_mask]
             filtered.index = pd.DatetimeIndex(idx[valid_mask])
             return filtered
@@ -181,7 +183,7 @@ def run(
     missing_metrics = [
         metric
         for metric, required in required_inputs.items()
-        if required and (metric not in series_cache or series_cache[metric].empty)
+        if required and (metric not in series_cache or series_cache[metric].dropna().empty)
     ]
 
     analysis_id = f"compliance_{spatial_entity.id}_{standard_id}"
