@@ -1,0 +1,167 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Building",
+        "description": "Rooms are taken from your Home Assistant areas. Pick the building settings first.",
+        "data": {
+          "name": "Name",
+          "building_type": "Building type",
+          "target_category": "Target category",
+          "window_days": "Assessment window",
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "building_type": "Selects the EN 16798-1 occupancy schedule and defaults.",
+          "target_category": "EN 16798-1 category the rooms should meet. II is the normal expectation for new or renovated buildings; I for sensitive occupants.",
+          "window_days": "Rolling period used for compliance, scores and categories.",
+          "scan_interval": "How often history is read and rooms are re-assessed."
+        }
+      },
+      "areas": {
+        "title": "Rooms",
+        "description": "Areas that contain temperature, CO₂ or humidity sensors are pre-selected. Remove outdoor or unheated areas.",
+        "data": {
+          "areas": "Areas to assess"
+        }
+      },
+      "sensors": {
+        "title": "Sensors per room",
+        "description": "Check the detected sensors. Leave a field empty if the room has no such sensor."
+      }
+    },
+    "error": {
+      "no_areas": "Select at least one area.",
+      "no_sensors_selected": "Select at least one sensor."
+    },
+    "abort": {
+      "no_sensors": "No temperature, CO₂ or humidity sensors are assigned to an area. Assign sensors (or their devices) to areas first."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HVX settings",
+        "data": {
+          "target_category": "Target category",
+          "window_days": "Assessment window",
+          "scan_interval": "Update interval",
+          "areas": "Areas to assess"
+        },
+        "data_description": {
+          "target_category": "EN 16798-1 category the rooms should meet. II is the normal expectation for new or renovated buildings; I for sensitive occupants.",
+          "window_days": "Rolling period used for compliance, scores and categories.",
+          "scan_interval": "How often history is read and rooms are re-assessed."
+        }
+      },
+      "sensors": {
+        "title": "Sensors per room",
+        "description": "Check the sensors used for each room."
+      }
+    },
+    "error": {
+      "no_sensors_selected": "Select at least one sensor."
+    }
+  },
+  "selector": {
+    "target_category": {
+      "options": {
+        "cat_i": "Category I – high",
+        "cat_ii": "Category II – normal",
+        "cat_iii": "Category III – moderate",
+        "cat_iv": "Category IV – low"
+      }
+    },
+    "building_type": {
+      "options": {
+        "office": "Office",
+        "school": "School",
+        "residential": "Residential",
+        "meeting_room": "Meeting / conference",
+        "classroom": "Classroom"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ieq_score": {
+        "name": "IEQ score"
+      },
+      "comfort_category": {
+        "name": "Comfort category",
+        "state": {
+          "cat_i": "Category I",
+          "cat_ii": "Category II",
+          "cat_iii": "Category III",
+          "cat_iv": "Category IV",
+          "below_iv": "Below category IV"
+        }
+      },
+      "current_category": {
+        "name": "Current category",
+        "state": {
+          "cat_i": "Category I",
+          "cat_ii": "Category II",
+          "cat_iii": "Category III",
+          "cat_iv": "Category IV",
+          "below_iv": "Below category IV"
+        }
+      },
+      "temperature_compliance": {
+        "name": "Temperature compliance"
+      },
+      "co2_compliance": {
+        "name": "CO₂ compliance"
+      },
+      "humidity_compliance": {
+        "name": "Humidity compliance"
+      },
+      "building_ieq_score": {
+        "name": "IEQ score"
+      },
+      "building_rooms_meeting_target": {
+        "name": "Rooms meeting target"
+      },
+      "building_comfort_category": {
+        "name": "Comfort category",
+        "state": {
+          "cat_i": "Category I",
+          "cat_ii": "Category II",
+          "cat_iii": "Category III",
+          "cat_iv": "Category IV",
+          "below_iv": "Below category IV"
+        }
+      }
+    },
+    "binary_sensor": {
+      "ieq_problem": {
+        "name": "IEQ problem"
+      }
+    }
+  },
+  "services": {
+    "generate_report": {
+      "name": "Generate IEQ report",
+      "description": "Builds a report for the assessment window and saves it under /local/hvx_ieq/.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Building",
+          "description": "Building to report on (default: the first one)."
+        },
+        "format": {
+          "name": "Format",
+          "description": "html, json or csv."
+        },
+        "full_analysis": {
+          "name": "Full analysis",
+          "description": "Include ventilation, correlation and scenario models (slower)."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_entry": {
+      "message": "No HVX building is set up."
+    }
+  }
+}

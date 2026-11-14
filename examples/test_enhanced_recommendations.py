@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """
 Test the enhanced recommendations system with seasonal and solar analyses.
 
@@ -12,9 +15,9 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-from simulations.models.correlations import ClimateCorrelationModel
-from simulations.models.recommendations import SmartRecommendationsModel
-from simulations.models.scenario import ScenarioImpactModel
+from hvx.simulations.models.correlations import ClimateCorrelationModel
+from hvx.simulations.models.recommendations import SmartRecommendationsModel
+from hvx.simulations.models.scenario import ScenarioImpactModel
 
 
 def generate_sample_data(

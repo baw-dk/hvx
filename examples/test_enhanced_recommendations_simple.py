@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """
 Test the enhanced recommendations system with seasonal and solar analyses.
 
@@ -19,9 +22,9 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # Direct imports to avoid circular dependencies
-from simulations.models.correlations.model import ClimateCorrelationModel
-from simulations.models.correlations.seasonal_thermal_analysis import SeasonalThermalAnalyzer
-from simulations.models.correlations.solar_gain_analysis import SolarGainUtilizationAnalyzer
+from hvx.simulations.models.correlations.model import ClimateCorrelationModel
+from hvx.simulations.models.correlations.seasonal_thermal_analysis import SeasonalThermalAnalyzer
+from hvx.simulations.models.correlations.solar_gain_analysis import SolarGainUtilizationAnalyzer
 
 
 def generate_sample_data(

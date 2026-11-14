@@ -1,0 +1,19 @@
+{
+  "domain": "hvx_ieq",
+  "name": "HVX Indoor Environment",
+  "codeowners": [
+    "@bruadam"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "recorder"
+  ],
+  "documentation": "https://github.com/baw-dk/hvx",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/baw-dk/hvx/issues",
+  "requirements": [
+    "hvx==0.4.0"
+  ],
+  "version": "0.4.0"
+}

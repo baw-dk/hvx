@@ -1,0 +1,43 @@
+{
+  "entity": {
+    "sensor": {
+      "ieq_score": {
+        "default": "mdi:home-thermometer-outline"
+      },
+      "comfort_category": {
+        "default": "mdi:sofa-outline"
+      },
+      "current_category": {
+        "default": "mdi:sofa"
+      },
+      "temperature_compliance": {
+        "default": "mdi:thermometer-check"
+      },
+      "co2_compliance": {
+        "default": "mdi:molecule-co2"
+      },
+      "humidity_compliance": {
+        "default": "mdi:water-check"
+      },
+      "building_ieq_score": {
+        "default": "mdi:office-building-cog-outline"
+      },
+      "building_rooms_meeting_target": {
+        "default": "mdi:target"
+      },
+      "building_comfort_category": {
+        "default": "mdi:office-building-outline"
+      }
+    },
+    "binary_sensor": {
+      "ieq_problem": {
+        "default": "mdi:alert-circle-outline"
+      }
+    }
+  },
+  "services": {
+    "generate_report": {
+      "service": "mdi:file-chart-outline"
+    }
+  }
+}
