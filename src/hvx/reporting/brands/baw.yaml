@@ -5,7 +5,7 @@
 # made-up CVR number. Use it with:  hvx report ... --brand baw
 # (or ReportConfig(branding="baw")). Without --brand, reports are white-label.
 
-name: BAW
+name: baw            # wordmark as in the BAW logo (lowercase)
 legal_name: "BAW – Bruno Adam"   # BAW design system: the practice of Bruno Adam
 cvr: "46539214"          # 8-digit CVR number
 address: "Copenhagen"
