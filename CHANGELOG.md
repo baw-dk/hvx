@@ -16,6 +16,8 @@ All notable changes to this project are documented here. The format follows
   outside the heating season temperature limits follow the running mean of daily outdoor
   temperature (computed from all hours, not the assessed slice). Seasons show "(adaptive)".
 - Home Assistant integration brand icon (`custom_components/hvx_ieq/brand/`), required by HACS.
+- TAIL donut (sunburst) for the portfolio and each building: a domain's unmeasured parameters
+  form one grey segment instead of one sliver each; the comparison table stays below.
 
 ### Fixed
 - Adaptive limits used a symmetric ±2/3/4 K band without pythermalcomfort; now EN 16798-1's

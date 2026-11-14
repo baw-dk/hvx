@@ -111,7 +111,7 @@ def _environment(report: PortfolioReport) -> Environment:
         category_bar=lambda counts, **kw: Markup(charts.category_bar(counts, labels=labels, pct_format=lambda p: t.pct(p, 0), **kw)),
         histogram=lambda bins, **kw: Markup(charts.histogram(bins, title=t("Distribution of room IEQ scores"), unit=t("rooms"), **kw)),
         meter=lambda v, **kw: Markup(charts.meter(v, **kw)),
-        tail_chart=lambda tail, size=220: Markup(charts.tail_sunburst(tail, size=size, language=t.language, title="TAIL", na=t("not assessed"))),
+        tail_chart=lambda tail, size=220: Markup(charts.tail_sunburst(tail, size=size, language=t.language, title="TAIL", na=t("not measured"))),
         tail_tree=lambda tail: Markup(charts.tail_tree(tail, language=t.language, na=t("not measured"))),
         tail_badge=_tail_badge,
         tail_spread=lambda counts: _tail_spread(counts, t),
