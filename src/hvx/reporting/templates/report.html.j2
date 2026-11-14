@@ -74,6 +74,8 @@
   <div class="muted">
     {{ cfg.seasons | length > 1 and "Full year (" ~ (cfg.seasons | map("capitalize") | join(" + ")) ~ ")" or (cfg.seasons[0] | replace("_", " ") | capitalize) }}
     · Target: EN 16798-1 Category {{ cfg.target_category }}
+    {% set occ = (report.rooms | selectattr("occupancy") | map(attribute="occupancy") | unique | list) %}
+    {% if occ | length == 1 %}· Assessed: {{ occ[0] }}{% endif %}
     · Generated {{ report.generated_at | date }}
   </div>
 </header>
@@ -101,6 +103,15 @@
       <span><i class="cat-{{ c }}"></i>{{ CATEGORY_LABELS[c] }}: {{ s.category_counts[c] }}</span>
       {% endfor %}
     </div>
+    {% if s.exceedance_hours %}
+    <h3 style="margin-top:16px">Average hours per room above limits (occupied time)</h3>
+    <table class="small">
+      {% for key, hours in s.exceedance_hours.items() %}
+      {% set p, lim = key.split(">") %}
+      <tr><td>{{ param_label(p) }} &gt; {{ lim }} {{ "ppm" if p == "co2" else "°C" }}</td><td class="num">{{ hours | num(0, "h") }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
     <h3 style="margin-top:16px">Time within Category {{ cfg.target_category }} limits</h3>
     <table class="small">
       {% for p, v in s.compliance.items() %}
@@ -144,6 +155,7 @@
     <th data-sort="text">Building</th><th data-sort="num" class="num">Rooms</th><th data-sort="text">Category</th>
     <th data-sort="num" class="num">Meets target</th><th data-sort="num" class="num">Score</th>
     <th data-sort="num" class="num">Temp.</th><th data-sort="num" class="num">CO₂</th><th data-sort="num" class="num">RH</th>
+    <th data-sort="num" class="num" title="Average hours per room above 1000 ppm during occupied time">CO₂&gt;1000 h</th>
     <th style="min-width:160px">Category mix</th>
   </tr></thead>
   <tbody>
@@ -158,6 +170,8 @@
       {% set v = b.summary.compliance.get(p) %}
       <td class="num {{ v | level }}" data-v="{{ v if v is not none else -1 }}">{{ v | pct }}</td>
       {% endfor %}
+      {% set h = b.summary.exceedance_hours.get("co2>1000") %}
+      <td class="num" data-v="{{ h if h is not none else -1 }}">{{ h | num(0) }}</td>
       <td>{{ category_bar(b.summary.category_counts, width=200, height=14) }}</td>
     </tr>
   {% endfor %}
@@ -177,10 +191,10 @@
       <div class="muted small">{{ [r.building_name, r.floor_name, r.room_type] | select | join(" · ") }}{% if r.area_m2 %} · {{ r.area_m2 | num(0, "m²") }}{% endif %}</div>
     </div>
     <div>
-      {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% else %}<span class="cat cat-none">n/a</span>{% endif %}
+      {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none">&lt;IV</span>{% else %}<span class="cat cat-none">n/a</span>{% endif %}
       <span class="pill {{ r.ieq_score | level }}">Score {{ r.ieq_score | num }}</span>
       {% if r.tail_rating %}<span class="pill">TAIL {{ r.tail_rating }}</span>{% endif %}
-      {% if r.br18_pass is not none %}<span class="pill">BR18 {{ "pass" if r.br18_pass else "fail" }}</span>{% endif %}
+      {% if r.br18_pass is not none %}<span class="pill" title="{{ r.br18_failed | join('; ') }}">BR18 {{ "pass" if r.br18_pass else "fail" }}</span>{% endif %}
     </div>
   </header>
   {% if r.issues %}<ul class="issues">{% for i in r.issues %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
@@ -202,7 +216,17 @@
     {% for se in r.seasons %}{{ se.season | capitalize }} {{ se.achieved_category or "n/a" }} ({{ se.compliance_pct | pct(0) }} within target){% if not loop.last %} · {% endif %}{% endfor %}
   </p>
   {% endif %}
-  {% if r.ventilation %}<p class="small"><strong>Ventilation:</strong> {{ r.ventilation.description }}</p>{% endif %}
+  {% if r.exceedance_hours %}
+  <p class="small"><strong>Hours above limits (occupied):</strong>
+    {% for key, hours in r.exceedance_hours.items() %}{% set p, lim = key.split(">") %}{{ param_label(p) }} &gt; {{ lim }}: {{ hours | num(0, "h") }}{% if not loop.last %} · {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+  {% if r.period_breakdown %}
+  <p class="small"><strong>By time of day:</strong>
+    {% for name, st in r.period_breakdown.items() %}{{ name | capitalize }}: CO₂ mean {{ st.get("co2_mean") | num(0, "ppm") }}, &gt; 1000 ppm {{ st.get("co2>1000_pct") | pct(0) }} of the time{% if not loop.last %} · {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+  {% if r.ventilation %}<p class="small"><strong>Air change from CO₂ decay:</strong> {{ r.ventilation.description }} <span class="muted">Decays mostly occur after hours, when mechanical ventilation may be off.</span></p>{% endif %}
   {% if r.recommendations %}
   <details>
     <summary>{{ r.recommendations | length }} recommendation(s)</summary>
@@ -234,6 +258,7 @@
     <th data-sort="text">Building</th><th data-sort="text">Floor</th><th data-sort="text">Room</th>
     <th data-sort="text">Category</th><th data-sort="num" class="num">Score</th>
     <th data-sort="num" class="num">Temp.</th><th data-sort="num" class="num">CO₂</th><th data-sort="num" class="num">RH</th>
+    <th data-sort="num" class="num">CO₂&gt;1000 h</th><th data-sort="num" class="num">T&gt;26 h</th>
     <th data-sort="text">TAIL</th><th data-sort="num" class="num">Data</th>
   </tr></thead>
   <tbody>
@@ -241,11 +266,15 @@
     <tr>
       <td>{{ r.building_name or "–" }}</td><td>{{ r.floor_name or "–" }}</td>
       <td>{{ r.room_name }}{% if r.status != "ok" %} <span class="pill">{{ "no data" if r.status == "no_data" else "error" }}</span>{% endif %}</td>
-      <td data-v="{{ r.achieved_category or 'Z' }}">{% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% else %}–{% endif %}</td>
+      <td data-v="{{ r.achieved_category or ('Y' if r.below_category_iv else 'Z') }}">{% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="Below Category IV">&lt;IV</span>{% else %}–{% endif %}</td>
       <td class="num {{ r.ieq_score | level }}" data-v="{{ r.ieq_score if r.ieq_score is not none else -1 }}">{{ r.ieq_score | num }}</td>
       {% for p in ["temperature", "co2", "humidity"] %}
       {% set v = r.compliance.get(p) %}
       <td class="num {{ v | level }}" data-v="{{ v if v is not none else -1 }}">{{ v | pct }}</td>
+      {% endfor %}
+      {% for key in ["co2>1000", "temperature>26"] %}
+      {% set h = r.exceedance_hours.get(key) %}
+      <td class="num" data-v="{{ h if h is not none else -1 }}">{{ h | num(0) }}</td>
       {% endfor %}
       <td>{{ r.tail_rating or "–" }}</td>
       {% set c = r.data_quality.get("completeness_pct") %}
@@ -276,6 +305,7 @@
   <ul class="findings">
     <li><strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). The achieved category is the best category whose limits are met for the share of time the standard requires.</li>
     <li><strong>Seasons.</strong> {% if cfg.seasons | length > 1 %}Data is split into the country's heating and cooling months; each part is assessed with its own criteria, and a room's category is its worst seasonal category.{% else %}All data is assessed with {{ cfg.seasons[0] }} criteria.{% endif %}</li>
+    <li><strong>Assessed hours.</strong> {% if cfg.occupied_only %}Standards are applied to occupied hours only{% if occ | length == 1 %} ({{ occ[0] }}){% endif %}; the air-change estimate uses all hours.{% else %}All hours are assessed.{% endif %} Hours above limits are weighted by each sample's duration.</li>
     <li><strong>Compliance %.</strong> Share of samples within Category {{ cfg.target_category }} limits, per parameter. Parameters below {{ cfg.issue_threshold_pct | num(0) }}% are listed as issues.</li>
     <li><strong>IEQ score.</strong> Weighted mean of parameter compliance ({% for p, w in cfg.score_weights.items() %}{{ param_label(p) }} {{ (w * 100) | round | int }}%{% if not loop.last %}, {% endif %}{% endfor %}; weights renormalised over available parameters).</li>
     <li><strong>Building and portfolio category.</strong> The best category that at least {{ (cfg.group_category_threshold * 100) | round | int }}% of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.</li>

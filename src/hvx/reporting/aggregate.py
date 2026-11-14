@@ -15,9 +15,13 @@ from .model import CATEGORIES, IEQ_PARAMETERS, ActionItem, BuildingReport, Group
 _PRIORITY = {"high": 0, "medium": 1, "low": 2}
 
 
-def group_category(counts: Dict[str, int], threshold: float) -> Optional[str]:
-    """Best category reached by at least ``threshold`` of rated rooms (cumulative I→IV)."""
-    total = sum(counts.get(c, 0) for c in CATEGORIES)
+def group_category(counts: Dict[str, int], threshold: float, below_iv: int = 0) -> Optional[str]:
+    """Best category reached by at least ``threshold`` of rated rooms (cumulative I→IV).
+
+    ``below_iv`` rooms were assessed but missed Category IV; they count in the
+    denominator (as failing every category), unlike rooms that could not be rated.
+    """
+    total = sum(counts.get(c, 0) for c in CATEGORIES) + below_iv
     if not total:
         return None
     cumulative = 0
@@ -41,7 +45,8 @@ def summarize(rooms: Sequence[RoomReport], config: ReportConfig) -> GroupSummary
         s.category_counts[r.achieved_category if r.achieved_category in CATEGORIES else "none"] += 1
     if analysed:
         s.category_pct = {k: round(100.0 * v / len(analysed), 1) for k, v in s.category_counts.items()}
-    s.category = group_category(s.category_counts, config.group_category_threshold)
+    below_iv = sum(1 for r in analysed if r.below_category_iv)
+    s.category = group_category(s.category_counts, config.group_category_threshold, below_iv)
 
     rated = [r for r in analysed if r.meets_target is not None]
     if rated:
@@ -60,6 +65,10 @@ def summarize(rooms: Sequence[RoomReport], config: ReportConfig) -> GroupSummary
     for r in analysed:
         if r.ieq_score is not None:
             s.score_histogram[min(int(r.ieq_score // 10), 9)] += 1
+    keys = sorted({k for r in analysed for k in r.exceedance_hours})
+    for key in keys:
+        values = [r.exceedance_hours[key] for r in analysed if key in r.exceedance_hours]
+        s.exceedance_hours[key] = round(sum(values) / len(values), 1)
     return s
 
 
@@ -126,6 +135,13 @@ def highlights(
             f"{PARAMETER_LABELS.get(weakest, weakest)} is the weakest parameter: rooms are within "
             f"Category {config.target_category} limits {params[weakest]:g}% of the time on average."
         )
+    if "co2>1000" in s.exceedance_hours:
+        line = f"Rooms are above 1000 ppm CO₂ for {s.exceedance_hours['co2>1000']:,.0f} occupied hours on average"
+        if s.exceedance_hours.get("co2>2000"):
+            line += f" and above 2000 ppm for {s.exceedance_hours['co2>2000']:,.0f} hours"
+        out.append(line + ".")
+    if "temperature>26" in s.exceedance_hours:
+        out.append(f"Rooms are above 26 °C for {s.exceedance_hours['temperature>26']:,.0f} occupied hours on average (BR18 allows 100 h).")
     scored = [b for b in buildings if b.summary.ieq_score is not None]
     if len(scored) > 1:
         worst = min(scored, key=lambda b: b.summary.ieq_score)

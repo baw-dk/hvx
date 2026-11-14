@@ -20,7 +20,7 @@ CONF_ROOMS = "rooms"
 DEFAULT_TARGET_CATEGORY = "II"
 DEFAULT_WINDOW_DAYS = 7
 DEFAULT_SCAN_INTERVAL = 15  # minutes
-DEFAULT_BUILDING_TYPE = "office"
+DEFAULT_BUILDING_TYPE = "residential"  # most HA installs are homes: assessed around the clock
 
 CATEGORIES = ["I", "II", "III", "IV"]
 BUILDING_TYPES = ["office", "school", "residential", "meeting_room", "classroom"]

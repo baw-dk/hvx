@@ -63,7 +63,13 @@ class SmartRecommendationsModel:
         if ventilation_result is None:
             return None
 
-        need_upgrade = (co2_compliance is not None and co2_compliance < 90.0) or ventilation_result.ach < 2.0
+        # Measured CO2 during use decides. The decay-based air change rate is only a
+        # fallback: decays mostly happen after hours, when mechanical ventilation is
+        # often off, so a low value alone does not show a problem during lessons.
+        if co2_compliance is not None:
+            need_upgrade = co2_compliance < 90.0
+        else:
+            need_upgrade = ventilation_result.ach < 2.0
         if not need_upgrade:
             return None
 

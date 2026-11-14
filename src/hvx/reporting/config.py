@@ -7,13 +7,19 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from hvx.core.schedules import OccupancySchedule
 
 VALID_SEASONS = ("winter", "summer", "all_year")
 VALID_CATEGORIES = ("I", "II", "III", "IV")
 
 # Weights of the composite IEQ score (renormalised over available parameters).
 DEFAULT_SCORE_WEIGHTS: Dict[str, float] = {"temperature": 0.4, "co2": 0.4, "humidity": 0.2}
+# Hours above these limits are reported per room (occupied hours). CO2 1000 ppm is
+# the Danish Working Environment Authority guideline; 26/27 °C are the BR18 limits.
+DEFAULT_EXCEEDANCE: Dict[str, List[float]] = {"co2": [1000.0, 2000.0], "temperature": [26.0, 27.0]}
+DEFAULT_DAY_PERIODS: Dict[str, Tuple[str, str]] = {"morning": ("08:00", "12:00"), "afternoon": ("12:00", "16:00")}
 
 
 @dataclass
@@ -31,6 +37,12 @@ class ReportConfig:
         Compliance percentages and the IEQ score are measured against this
         EN 16798-1 category (Category II = "normal expectation", the usual
         target for new and renovated buildings).
+    Occupancy
+        With ``occupied_only`` (default) the standards assess only occupied hours:
+        ``occupancy`` if given, otherwise the building type's opening hours
+        (``hvx.core.schedules``), minus public holidays and any
+        ``holiday_periods`` here or in building/portfolio ``metadata["holiday_periods"]``.
+        Simulations still see all data (CO₂ decay happens after people leave).
     Parallelism
         ``max_workers=None`` picks automatically: serial for small portfolios,
         a process pool otherwise. Rooms are independent so throughput scales
@@ -52,6 +64,12 @@ class ReportConfig:
 
     issue_threshold_pct: float = 90.0  # parameter compliance below this is flagged as an issue
     min_samples_per_season: int = 24
+
+    occupied_only: bool = True
+    occupancy: Optional[OccupancySchedule] = None  # None: from building type
+    holiday_periods: Tuple[Tuple[str, str], ...] = ()
+    exceedance_thresholds: Dict[str, List[float]] = field(default_factory=lambda: {k: list(v) for k, v in DEFAULT_EXCEEDANCE.items()})
+    day_periods: Dict[str, Tuple[str, str]] = field(default_factory=lambda: dict(DEFAULT_DAY_PERIODS))
     top_n_rooms: int = 15  # rooms given a detailed card in the HTML report
     max_actions: int = 8
 
@@ -92,6 +110,10 @@ class ReportConfig:
         if backend == "serial":
             workers = 1
         return backend, max(1, min(workers, max(n_rooms, 1)))
+
+    def schedule_for(self, building_type: Optional[str], extra_holidays=()) -> OccupancySchedule:
+        base = self.occupancy or OccupancySchedule.for_building_type(building_type or self.default_building_type)
+        return base.with_holidays(tuple(self.holiday_periods) + tuple(tuple(p) for p in extra_holidays))
 
     def to_dict(self) -> dict:
         data = asdict(self)

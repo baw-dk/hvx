@@ -105,8 +105,83 @@ def generate_occupancy_mask(
     return pd.Series(mask_values, index=index)
 
 
+@dataclass(frozen=True)
+class OccupancySchedule:
+    """
+    When a space counts as occupied, for assessments that apply "during use".
+
+    ``start``/``end`` are local clock times (end exclusive); ``weekdays`` uses
+    Monday=0. ``holiday_periods`` are inclusive ``(first_day, last_day)`` ISO date
+    pairs (e.g. school holidays); ``public_holidays`` excludes the country's
+    statutory holidays.
+    """
+
+    start: str = "08:00"
+    end: str = "16:00"
+    weekdays: Tuple[int, ...] = (0, 1, 2, 3, 4)
+    holiday_periods: Tuple[Tuple[str, str], ...] = ()
+    public_holidays: bool = True
+    always: bool = False  # 24/7 spaces (residential, hospitals)
+
+    @classmethod
+    def for_building_type(cls, building_type: Optional[str], **overrides) -> "OccupancySchedule":
+        profile = get_opening_profile_for_building_type(building_type)
+        if profile == OpeningHoursProfile.TWENTY_FOUR_SEVEN:
+            return cls(always=True, public_holidays=False, **overrides)
+        periods = PROFILE_DEFINITIONS[profile]
+        weekdays = tuple(sorted(periods))
+        first = periods[weekdays[0]][0]
+        base = dict(start=first[0].strftime("%H:%M"), end=first[1].strftime("%H:%M"), weekdays=weekdays)
+        return cls(**{**base, **overrides})
+
+    def with_holidays(self, periods: Iterable[Iterable[str]]) -> "OccupancySchedule":
+        extra = tuple((str(a), str(b)) for a, b in periods)
+        if not extra:
+            return self
+        return OccupancySchedule(self.start, self.end, self.weekdays, self.holiday_periods + extra, self.public_holidays, self.always)
+
+    def mask(self, index: pd.DatetimeIndex, country: Optional[str] = None) -> pd.Series:
+        """Boolean mask over a local, timezone-naive DatetimeIndex (vectorised)."""
+        if self.always:
+            return pd.Series(True, index=index)
+        minutes = index.hour * 60 + index.minute
+        start, end = (_minutes(self.start), _minutes(self.end))
+        occupied = (minutes >= start) & (minutes < end) & index.day_of_week.isin(self.weekdays)
+        days = index.normalize()
+        if self.public_holidays and country and len(index):
+            import holidays as holidays_lib
+
+            try:
+                years = range(int(index.year.min()), int(index.year.max()) + 1)
+                public = holidays_lib.country_holidays(country.upper(), years=years)
+                occupied &= ~days.isin(pd.to_datetime(list(public.keys())))
+            except (NotImplementedError, KeyError):
+                pass
+        for first, last in self.holiday_periods:
+            occupied &= ~((days >= pd.Timestamp(first)) & (days <= pd.Timestamp(last)))
+        return pd.Series(occupied, index=index)
+
+    def describe(self) -> str:
+        if self.always:
+            return "all hours (24/7 occupancy)"
+        names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        days = ", ".join(names[d] for d in self.weekdays)
+        text = f"{days} {self.start}–{self.end}"
+        if self.public_holidays:
+            text += ", excluding public holidays"
+        if self.holiday_periods:
+            text += f" and {len(self.holiday_periods)} holiday period(s)"
+        return text
+
+
+def _minutes(hhmm: str) -> int:
+    hour, minute = hhmm.split(":")
+    return int(hour) * 60 + int(minute)
+
+
 __all__ = [
     "PROFILE_DEFINITIONS",
+    "OccupancySchedule",
     "get_opening_profile_for_building_type",
     "generate_occupancy_mask",
 ]
