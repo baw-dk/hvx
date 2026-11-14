@@ -78,7 +78,7 @@ class ReportBuilder:
             summary=summary,
             buildings=building_reports,
             rooms=room_reports,
-            actions=group_actions(room_reports, config.max_actions, qualify=len(building_reports) > 1),
+            actions=group_actions(room_reports, config.max_actions, qualify=len(building_reports) > 1, language=config.language),
             worst_room_ids=worst_rooms(room_reports, config.top_n_rooms),
             warnings=warnings,
         )
@@ -196,7 +196,7 @@ class ReportBuilder:
             ifc_guid=building.ifc_guid,
             summary=summarize(rooms, config),
             floors=floor_reports,
-            actions=group_actions(rooms, 3),
+            actions=group_actions(rooms, 3, language=config.language),
             worst_room_ids=worst_rooms(rooms, 5),
         )
 

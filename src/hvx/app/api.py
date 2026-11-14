@@ -604,6 +604,11 @@ def simulate_rc_thermal(request: RCThermalSimulationRequest):
     """
     Fit RC thermal model to identify building thermal parameters.
     """
+    raise HTTPException(
+        status_code=501,
+        detail="RC thermal fitting is experimental and not available: the model has no fitting method yet "
+        "(2R2C/3R3C also run the 1R1C model).",
+    )
     try:
         if request.room_id not in _store.rooms:
             raise HTTPException(status_code=404, detail="Room not found")
@@ -653,6 +658,10 @@ def calculate_epc(building_id: str):
     """
     Calculate EPC (Energy Performance Certificate) rating.
     """
+    raise HTTPException(
+        status_code=501,
+        detail="Operational EPC rating is experimental and not available: its thresholds file is not included yet.",
+    )
     try:
         if building_id not in _store.buildings:
             raise HTTPException(status_code=404, detail="Building not found")

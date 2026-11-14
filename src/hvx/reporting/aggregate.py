@@ -132,14 +132,31 @@ def _generic_title(rec: dict, room_name: str) -> str:
     return re.sub(rf"\s+(in|for)\s+{re.escape(room_name)}\s*$", "", title).strip() or title
 
 
-def group_actions(rooms: Iterable[RoomReport], limit: int, qualify: bool = False) -> List[ActionItem]:
+def _effect_range(kind: Optional[str], values: List[float], t: Translator) -> Optional[str]:
+    """Effect estimates of the rooms in one action, as a range (not one room's number)."""
+    values = sorted(v for v in values if v is not None)
+    if not values or kind is None:
+        return None
+    lo, hi, mid = values[0], values[-1], values[len(values) // 2]
+    if kind == "airflow_factor":
+        return t("×{lo}–×{hi} outdoor air during use (median ×{mid}; steady-state estimate)",
+                 lo=t.num(lo, 1), hi=t.num(hi, 1), mid=t.num(mid, 1))
+    if kind == "hours_avoided":
+        return t("{lo}–{hi} fewer hours above 26 °C per room (estimate)", lo=t.num(lo, 0), hi=t.num(hi, 0))
+    return None
+
+
+def group_actions(rooms: Iterable[RoomReport], limit: int, qualify: bool = False, language: str = "en") -> List[ActionItem]:
     """Merge per-room recommendations into portfolio/building actions.
 
-    ``qualify`` prefixes room names with their building (portfolio level, where
-    room names like "11" are ambiguous across buildings).
+    The description is the action's room-independent summary and the expected effect
+    the range over the rooms. ``qualify`` prefixes room names with their building
+    (portfolio level, where room names like "11" are ambiguous across buildings).
     """
+    t = Translator(language)
     groups: Dict[tuple, ActionItem] = {}
     severity: Dict[tuple, tuple] = {}
+    effects: Dict[tuple, tuple] = {}
     for r in rooms:
         for rec in r.recommendations:
             title = rec.get("action") or _generic_title(rec, r.room_name)
@@ -155,8 +172,14 @@ def group_actions(rooms: Iterable[RoomReport], limit: int, qualify: bool = False
             if key not in severity or rank < severity[key]:
                 severity[key] = rank
                 item.priority = priority
-                item.description = rec.get("description")
-                item.expected_benefit = rec.get("expected_benefit")
+                item.description = rec.get("summary") or rec.get("description")
+            kind, values = effects.get(key, (rec.get("metric_kind"), []))
+            if rec.get("metric") is not None:
+                values.append(float(rec["metric"]))
+            effects[key] = (kind or rec.get("metric_kind"), values)
+    for key, item in groups.items():
+        kind, values = effects.get(key, (None, []))
+        item.expected_benefit = _effect_range(kind, values, t)
     ordered = sorted(groups.values(), key=lambda a: (_PRIORITY.get(a.priority, 3), -a.room_count, a.title))
     return ordered[:limit]
 

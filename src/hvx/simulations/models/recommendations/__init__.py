@@ -9,10 +9,12 @@ from .model import (
     SmartRecommendationsModel,
     SmartRecommendation,
     RecommendationType,
+    RoomEvidence,
 )
 
 __all__ = [
     "SmartRecommendationsModel",
     "SmartRecommendation",
     "RecommendationType",
+    "RoomEvidence",
 ]

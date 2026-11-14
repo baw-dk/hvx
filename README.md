@@ -293,9 +293,11 @@ Complete implementation of EN 16798-1 indoor environmental input parameters:
 - **Humidity thresholds**: Relative humidity ranges for each category
 - **Ventilation requirements**: Required ventilation rates based on occupancy and building pollution
 - **Compliance assessment**: Instant values and time series analysis
-- **Category determination**: Automatic category achievement based on measurements
+- **Category determination**: each parameter reaches the best category whose limits it meets in
+  at least 95 % of its measured occupied hours (`assessment.pass_share`); the room takes its
+  worst parameter. Relative humidity counts only for rooms with `humidity_controlled: true`.
 
-**Categories**: I (High), II (Normal), III (Moderate), IV (Low)
+**Categories**: I (High), II (Normal), III (Moderate), IV (everything outside III)
 
 ### 2. TAIL Standard Module (`src/hvx/standards/tail/calculator.py`)
 
@@ -309,15 +311,20 @@ TAIL rating scheme for comprehensive indoor environmental quality:
 
 ### 3. Ventilation Simulation Model (`src/hvx/simulations/models/ventilation/model.py`)
 
-Estimate ventilation rates from CO2 decay analysis:
+After-hours air change rate from CO2 decays (tracer-gas decay, cf. ASTM E741 / D6245):
 
-- **CO2 decay analysis**: Exponential decay curve fitting
-- **ACH estimation**: Air changes per hour
-- **Quality categories**: Excellent (≥6 ACH), Good (≥4), Fair (≥2), Poor (<2)
-- **Confidence metrics**: R² goodness of fit and confidence intervals
-- **Multiple period averaging**: Weighted by fit quality
+- **Log-linear fit** of the excess over a per-room background CO2, free intercept, peak sample dropped
+- **Unoccupied time only** (no CO2 source during the decay); decays too fast for the sampling
+  interval are skipped and the fastest resolvable rate is reported
+- **Median and interquartile range** over the decays; no quality rating
+- Describes the empty room (ventilation may be reduced or off), **not ventilation during use**
 
-### 4. Occupancy Simulation Model (`src/hvx/simulations/models/occupancy/model.py`)
+Recommendations (`simulations/models/recommendations`) fire on measured occupied time against
+published limits (1000 ppm, the target category's EN 16798-1 ranges, BR18 26 °C guidance);
+effects are given only as stated estimates (airflow factor from steady state, hours above 26 °C
+avoided from a solar regression controlled for outdoor temperature).
+
+### 4. Occupancy Simulation Model (`src/hvx/simulations/models/occupancy/model.py`) — not validated, not used in reports
 
 Detect occupancy patterns from CO2 data:
 
@@ -327,9 +334,12 @@ Detect occupancy patterns from CO2 data:
 - **Occupant estimation**: Estimate number of occupants from CO2 levels
 - **CO2 mass balance**: Physics-based occupant count estimation
 
-### 5. RC Thermal Simulation (`src/hvx/simulations/models/rc_thermal/model.py`)
+### 5. RC Thermal Simulation (`src/hvx/simulations/models/rc_thermal/model.py`) — experimental
 
-### 6. Real EPC Simulation (`src/hvx/simulations/models/real_epc/model.py`)
+Not used in reports and not validated: 2R2C/3R3C currently run the 1R1C model and there is no
+ventilation heat-loss term. The API endpoint returns 501 until it is reworked.
+
+### 6. Real EPC Simulation (`src/hvx/simulations/models/real_epc/model.py`) — experimental
 
 Convert delivered energy intensity to an operational EPC rating:
 

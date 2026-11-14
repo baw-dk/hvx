@@ -1,22 +1,47 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+"""
+Rule-based recommendations from measured evidence.
+
+Every trigger is a measured share of occupied time against a published limit:
+
+* CO₂ above 1000 ppm (Danish guidance value: Arbejdstilsynet; BR18 § 447 design value
+  for teaching rooms).
+* Temperature outside the target category's EN 16798-1 range, per season (heating
+  season: Category II 20–24 °C; otherwise the cooling-season range, Category II
+  23–26 °C), and hours above 26 °C (BR18 guidance value: 100 h per year).
+* Relative humidity below 25 % / above 60 % (EN 16798-1 Category II range; humidity
+  advice is low priority, as the range is for dimensioning (de)humidification).
+
+A rule fires when the share exceeds 5 % of the season's occupied time (EN 16798-1's
+long-term deviation). Priorities are hvx's own judgement: high from 25 %, medium from
+10 %, else low (overheating is also high above the BR18 100 h guidance value).
+
+Expected effects are given only where they follow from the room's data with a stated
+assumption (see ``hvx.simulations.models.scenario``); they are estimates, not
+predictions. Rules that cannot be supported by the data (envelope from correlation
+signs, solar heat "savings" in kWh from a default window area, etc.) are not used.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
-from hvx.simulations.models.correlations import ClimateCorrelationResult
-from hvx.simulations.models.scenario import ScenarioImpactSummary
-from hvx.simulations.models.ventilation import VentilationRateResult
+import pandas as pd
 
 
 class RecommendationType(str, Enum):
-    """Categories for recommendations shown in the HTML report."""
+    """Categories for recommendations shown in the report."""
 
     VENTILATION = "ventilation"
     SOLAR_SHADING = "solar_shading"
+    OVERHEATING = "overheating"
+    HEATING = "heating"
+    HUMIDITY = "humidity"
+    # kept for older JSON consumers
     ENVELOPE = "envelope"
     OPERATIONAL = "operational"
     SEASONAL_CONTROL = "seasonal_control"
@@ -33,8 +58,11 @@ class SmartRecommendation:
     description: str
     expected_benefit: Optional[str] = None
     evidence: Optional[Dict[str, float]] = None
-    key: Optional[str] = None  # stable id, e.g. "ventilation"; selects the text template
+    key: Optional[str] = None  # stable id; selects the text template
     action: Optional[str] = None  # room-independent title, used to group rooms
+    summary: Optional[str] = None  # room-independent description for grouped actions
+    metric: Optional[float] = None  # numeric effect estimate (see metric_kind)
+    metric_kind: Optional[str] = None  # "airflow_factor" | "hours_avoided"
 
     def as_dict(self) -> dict:
         return {
@@ -46,131 +74,253 @@ class SmartRecommendation:
             "evidence": self.evidence or {},
             "key": self.key,
             "action": self.action,
+            "summary": self.summary,
+            "metric": self.metric,
+            "metric_kind": self.metric_kind,
         }
+
+
+@dataclass
+class RoomEvidence:
+    """Measured facts a room's recommendations rest on (shares in % of occupied time)."""
+
+    co2_limit: float = 1200.0  # target category limit (ppm)
+    heat_band: tuple = (20.0, 24.0)  # target category, heating season
+    cool_band: tuple = (23.0, 26.0)  # target category, rest of the year
+    co2_share_above_1000: Optional[float] = None
+    co2_hours_above_1000: Optional[float] = None
+    co2_p95: Optional[float] = None
+    heat_share_above: Optional[float] = None
+    heat_share_below: Optional[float] = None
+    heat_mean: Optional[float] = None
+    cool_share_above: Optional[float] = None
+    hours_above_26: Optional[float] = None
+    hours_above_27: Optional[float] = None
+    rh_share_below_25: Optional[float] = None  # heating season
+    rh_share_above_60: Optional[float] = None
+    airflow_factor: Optional[float] = None
+    solar_hours_avoided: Optional[float] = None
+    solar_k_per_100: Optional[float] = None
+    has_outdoor_temperature: bool = False
+    extra: Dict[str, float] = field(default_factory=dict)
+
+    @classmethod
+    def from_frame(
+        cls,
+        df: pd.DataFrame,
+        hours: pd.Series,
+        heating: pd.Series,
+        co2_limit: float,
+        heat_band: tuple,
+        cool_band: tuple,
+    ) -> "RoomEvidence":
+        """``df``: occupied samples; ``hours``: duration of each sample; ``heating``: True in the
+        heating season (all aligned on ``df.index``)."""
+        ev = cls(co2_limit=co2_limit, heat_band=tuple(heat_band), cool_band=tuple(cool_band))
+        heating = heating.reindex(df.index).fillna(False).astype(bool)
+        hours = hours.reindex(df.index).fillna(0.0)
+
+        def share(mask: pd.Series, valid: pd.Series) -> Optional[float]:
+            total = float(hours[valid].sum())
+            return round(100.0 * float(hours[valid & mask].sum()) / total, 1) if total > 0 else None
+
+        if "co2" in df:
+            co2 = df["co2"]
+            valid = co2.notna()
+            if valid.any():
+                ev.co2_share_above_1000 = share(co2 > 1000, valid)
+                ev.co2_hours_above_1000 = round(float(hours[valid & (co2 > 1000)].sum()), 0)
+                ev.co2_p95 = round(float(co2[valid].quantile(0.95)), 0)
+        if "temperature" in df:
+            t = df["temperature"]
+            valid = t.notna()
+            h_valid, c_valid = valid & heating, valid & ~heating
+            if h_valid.any():
+                ev.heat_share_above = share(t > heat_band[1], h_valid)
+                ev.heat_share_below = share(t < heat_band[0], h_valid)
+                ev.heat_mean = round(float(t[h_valid].mean()), 1)
+            if c_valid.any():
+                ev.cool_share_above = share(t > cool_band[1], c_valid)
+            if valid.any():
+                ev.hours_above_26 = round(float(hours[valid & (t > 26.0)].sum()), 0)
+                ev.hours_above_27 = round(float(hours[valid & (t > 27.0)].sum()), 0)
+        if "humidity" in df:
+            rh = df["humidity"]
+            valid = rh.notna()
+            if (valid & heating).any():
+                ev.rh_share_below_25 = share(rh < 25.0, valid & heating)
+            if valid.any():
+                ev.rh_share_above_60 = share(rh > 60.0, valid)
+        ev.has_outdoor_temperature = "outdoor_temperature" in df and df["outdoor_temperature"].notna().any()
+        return ev
+
+
+TRIGGER = 5.0  # % of occupied time (EN 16798-1 long-term deviation)
+
+
+def _priority(share: Optional[float]) -> str:
+    if share is None:
+        return "low"
+    return "high" if share >= 25.0 else "medium" if share >= 10.0 else "low"
 
 
 # Texts per language. Placeholders receive numbers already formatted for the language.
 RECOMMENDATION_TEXTS: Dict[str, Dict[str, Dict[str, str]]] = {
     "en": {
         "ventilation": {
-            "action": "Increase ventilation",
-            "title": "Increase ventilation in {room}",
-            "description": "Measured CO₂ levels indicate insufficient air exchange. Consider balancing supply fans, "
-            "extending schedules, or installing demand-controlled ventilation.",
-            "benefit": "+{gain} pp CO₂ compliance by reaching {ach} ACH",
+            "action": "Increase outdoor air during use",
+            "title": "Increase outdoor air during use in {room}",
+            "description": "CO₂ is above 1000 ppm for {hours} h, {pct} of the occupied time (95th percentile {p95} ppm). "
+            "Check that the ventilation runs at its design airflow during use (schedules, dampers, filters), balance "
+            "the supply, consider demand-controlled ventilation, and air out the room in breaks.",
+            "summary": "CO₂ is above 1000 ppm for a large part of the occupied time. Check that the ventilation runs at "
+            "its design airflow during use, balance the supply, consider demand-controlled ventilation, and air out "
+            "rooms in breaks.",
+            "benefit": "About ×{factor} the outdoor air during use would keep 95 % of the occupied time at or below "
+            "{limit} ppm (steady-state estimate).",
         },
         "solar_shading": {
-            "action": "Deploy solar shading",
-            "title": "Deploy solar shading in {room}",
-            "description": "Indoor temperatures move strongly with solar radiation. Use automated blinds, "
-            "electrochromic glazing, or fins to cut peak gains.",
-            "benefit": "+{gain} pp temperature compliance",
+            "action": "Reduce solar heat gains",
+            "title": "Reduce solar heat gains in {room}",
+            "description": "Outside the heating season the room is above {upper} °C for {pct} of the occupied time and "
+            "above 26 °C for {hours} h. Its temperature rises by about {k} °C per 100 W/m² of solar irradiance at equal "
+            "outdoor temperature. External shading (blinds, screens, awnings) acts before the heat enters.",
+            "summary": "Overheating outside the heating season with a measurable solar contribution. External shading "
+            "acts before the heat enters.",
+            "benefit": "About {avoided} fewer hours above 26 °C (estimate: shading assumed to remove 70 % of the measured "
+            "solar effect).",
         },
-        "envelope": {
-            "action": "Improve envelope tightness",
-            "title": "Improve envelope tightness in {room}",
-            "description": "Indoor temperature tracks the outdoor profile, pointing to conduction or infiltration "
-            "losses. Inspect window seals, check insulation continuity, and correct uncontrolled infiltration paths.",
+        "summer_overheating": {
+            "action": "Reduce overheating outside the heating season",
+            "title": "Reduce overheating in {room}",
+            "description": "Outside the heating season the room is above {upper} °C for {pct} of the occupied time and "
+            "above 26 °C for {hours} h (BR18 guidance value: 100 h). Check night and early-morning ventilation, "
+            "internal heat sources and solar shading{solar_note}.",
+            "summary": "Too warm outside the heating season. Check night and early-morning ventilation, internal heat "
+            "sources and solar shading.",
         },
-        "humidity": {
-            "action": "Review humidity control",
-            "title": "Review humidification schedule in {room}",
-            "description": "Humidity drifts outside the recommended band. Verify set-points and maintenance of "
-            "humidifiers/dehumidifiers.",
+        "heating_overheating": {
+            "action": "Lower heating during use",
+            "title": "Lower heating during use in {room}",
+            "description": "In the heating season the room is above {upper} °C for {pct} of the occupied time (mean "
+            "{mean} °C). Check thermostat set-points, the heating curve and whether heating and ventilation work "
+            "against each other. This also saves energy.",
+            "summary": "Too warm in the heating season. Check thermostat set-points and the heating curve; this also "
+            "saves energy.",
         },
-        "winter_overheating": {
-            "action": "Reduce winter overheating",
-            "title": "Reduce winter overheating in {room}",
-            "description": "During winter months, the room experiences overheating for {pct} of the time ({hours} hours). "
-            "This indicates excessive heating or poor temperature control. Consider adjusting heating curves, "
-            "implementing weather compensation, or upgrading to smart thermostatic controls with occupancy detection.",
-            "benefit": "Reduce overheating by ~{pct0} of winter hours",
+        "too_cold": {
+            "action": "Raise temperatures in the heating season",
+            "title": "Raise temperatures in the heating season in {room}",
+            "description": "In the heating season the room is below {lower} °C for {pct} of the occupied time (mean "
+            "{mean} °C). Check heat supply and set-points, morning start-up times, supply-air temperature and draughts.",
+            "summary": "Too cold in the heating season. Check heat supply and set-points, morning start-up, "
+            "supply-air temperature and draughts.",
         },
-        "summer_undercooling": {
-            "action": "Address summer undercooling",
-            "title": "Address summer undercooling in {room}",
-            "description": "During summer months, the room is too cold for {pct} of the time ({hours} hours). "
-            "This suggests overcooling, wasting energy and reducing comfort. Review cooling setpoints, consider "
-            "raising temperature targets, or implement adaptive comfort strategies that allow higher temperatures during summer.",
-            "benefit": "Eliminate {pct0} of overcooling hours, reducing cooling energy",
+        "temperature_control": {
+            "action": "Stabilise temperature control",
+            "title": "Stabilise temperature control in {room}",
+            "description": "In the heating season the room is both below {lower} °C ({below} of the occupied time) and "
+            "above {upper} °C ({above}). Check thermostat placement and settings, valve balancing, and the interplay of "
+            "heating, ventilation and solar gains.",
+            "summary": "Both too cold and too warm in the heating season. Check thermostats, valve balancing and the "
+            "interplay of heating and ventilation.",
         },
-        "winter_solar_gain": {
-            "action": "Improve winter solar heat gain",
-            "title": "Improve winter solar heat gain in {room}",
-            "description": "In winter, high solar radiation is available for {pct} of the time ({hours} hours) when the "
-            "room is cold. This represents missed passive heating opportunities. Consider removing or automating window "
-            "coverings to allow solar gains during sunny winter days, or reviewing shading schedules to maximize natural heating.",
-            "benefit": "Potential heating energy offset: ~{kwh} kWh/winter",
+        "dry_air": {
+            "action": "Check dry air in winter",
+            "title": "Check dry air in winter in {room}",
+            "description": "In the heating season relative humidity is below 25 % for {pct} of the occupied time. Dry air "
+            "is common with high outdoor-air supply in cold weather; make sure ventilation is not running harder than "
+            "needed outside use. Humidification is rarely worthwhile unless occupants complain.",
+            "summary": "Dry air in the heating season. Make sure ventilation does not run harder than needed outside "
+            "use; humidification is rarely worthwhile.",
         },
-        "summer_solar_excess": {
-            "action": "Reduce excessive solar heat gains",
-            "title": "Reduce excessive solar heat gains in {room}",
-            "description": "During summer, excessive solar radiation contributes to overheating for {pct} of the time "
-            "({hours} hours). This increases cooling demand and reduces comfort. Implement external shading (automated "
-            "blinds, louvers, or films), increase vegetation shading, or consider electrochromic glazing to block solar "
-            "gains during peak hours.",
-            "benefit": "Potential cooling load reduction: ~{kwh} kWh/summer",
+        "humid_air": {
+            "action": "Check high humidity",
+            "title": "Check high humidity in {room}",
+            "description": "Relative humidity is above 60 % for {pct} of the occupied time. Check ventilation and moisture "
+            "sources; sustained high humidity increases the risk of mould.",
+            "summary": "High humidity during use. Check ventilation and moisture sources.",
         },
     },
     "da": {
         "ventilation": {
-            "action": "Øg ventilationen",
-            "title": "Øg ventilationen i {room}",
-            "description": "De målte CO₂-niveauer viser, at luftskiftet i brugstiden er utilstrækkeligt. Overvej at "
-            "indregulere ventilationsanlægget, forlænge driftstiderne eller etablere behovsstyret ventilation.",
-            "benefit": "+{gain} procentpoint CO₂-overholdelse ved {ach} luftskifter i timen",
+            "action": "Øg udeluftmængden i brugstiden",
+            "title": "Øg udeluftmængden i brugstiden i {room}",
+            "description": "CO₂ er over 1000 ppm i {hours} timer, {pct} af brugstiden (95-percentil {p95} ppm). "
+            "Kontroller, at ventilationen kører med den projekterede luftmængde i brugstiden (driftstider, spjæld, "
+            "filtre), indreguler anlægget, overvej behovsstyret ventilation, og luft ud i pauserne.",
+            "summary": "CO₂ er over 1000 ppm i en stor del af brugstiden. Kontroller, at ventilationen kører med den "
+            "projekterede luftmængde i brugstiden, indreguler anlægget, overvej behovsstyret ventilation, og luft ud "
+            "i pauserne.",
+            "benefit": "Ca. ×{factor} udeluft i brugstiden vil holde CO₂ på højst {limit} ppm i 95 % af brugstiden "
+            "(skøn ud fra ligevægt).",
         },
         "solar_shading": {
-            "action": "Etabler solafskærmning",
-            "title": "Etabler solafskærmning i {room}",
-            "description": "Indetemperaturen følger solindstrålingen tæt. Automatisk styrede persienner, udvendige "
-            "lameller eller solafskærmende glas kan begrænse varmetilskuddet, når solen står højest.",
-            "benefit": "+{gain} procentpoint temperaturoverholdelse",
+            "action": "Begræns solvarmen",
+            "title": "Begræns solvarmen i {room}",
+            "description": "Uden for fyringssæsonen er lokalet over {upper} °C i {pct} af brugstiden og over 26 °C i "
+            "{hours} timer. Temperaturen stiger ca. {k} °C pr. 100 W/m² solindstråling ved samme udetemperatur. "
+            "Udvendig solafskærmning (persienner, screens, markiser) stopper varmen, før den kommer ind.",
+            "summary": "Overtemperatur uden for fyringssæsonen med et målbart bidrag fra solen. Udvendig solafskærmning "
+            "stopper varmen, før den kommer ind.",
+            "benefit": "Ca. {avoided} færre timer over 26 °C (skøn: solafskærmningen antages at fjerne 70 % af den målte "
+            "soleffekt).",
         },
-        "envelope": {
-            "action": "Forbedr klimaskærmens tæthed",
-            "title": "Forbedr klimaskærmens tæthed i {room}",
-            "description": "Indetemperaturen følger udetemperaturen, hvilket peger på varmetab gennem klimaskærmen "
-            "eller utætheder. Efterse vinduernes tætningslister, kontroller isoleringen og udbedr utætheder.",
+        "summer_overheating": {
+            "action": "Begræns overtemperatur uden for fyringssæsonen",
+            "title": "Begræns overtemperatur i {room}",
+            "description": "Uden for fyringssæsonen er lokalet over {upper} °C i {pct} af brugstiden og over 26 °C i "
+            "{hours} timer (vejledende værdi i BR18: 100 timer). Kontroller natte- og morgenventilation, interne "
+            "varmekilder og solafskærmning{solar_note}.",
+            "summary": "For varmt uden for fyringssæsonen. Kontroller natte- og morgenventilation, interne varmekilder "
+            "og solafskærmning.",
         },
-        "humidity": {
-            "action": "Gennemgå fugtforholdene",
-            "title": "Gennemgå fugtforholdene i {room}",
-            "description": "Luftfugtigheden ligger ofte uden for det anbefalede interval. Kontroller ventilationens "
-            "driftstider og indstillinger samt eventuelle befugtere eller affugtere.",
+        "heating_overheating": {
+            "action": "Sænk varmen i brugstiden",
+            "title": "Sænk varmen i brugstiden i {room}",
+            "description": "I fyringssæsonen er lokalet over {upper} °C i {pct} af brugstiden (middel {mean} °C). "
+            "Kontroller termostaternes indstilling, varmekurven, og om varme og ventilation modarbejder hinanden. "
+            "Det sparer også energi.",
+            "summary": "For varmt i fyringssæsonen. Kontroller termostater og varmekurve; det sparer også energi.",
         },
-        "winter_overheating": {
-            "action": "Reducer overtemperatur i fyringssæsonen",
-            "title": "Reducer overtemperatur i fyringssæsonen i {room}",
-            "description": "I fyringssæsonen er lokalet for varmt {pct} af tiden ({hours} timer). Det tyder på for høj "
-            "varmetilførsel eller utilstrækkelig temperaturregulering. Overvej at justere varmekurven, indføre "
-            "udetemperaturkompensering eller termostatstyring med tilstedeværelsesregistrering.",
-            "benefit": "Overtemperaturen kan reduceres med op til ca. {pct0} af timerne i fyringssæsonen",
+        "too_cold": {
+            "action": "Hæv temperaturen i fyringssæsonen",
+            "title": "Hæv temperaturen i fyringssæsonen i {room}",
+            "description": "I fyringssæsonen er lokalet under {lower} °C i {pct} af brugstiden (middel {mean} °C). "
+            "Kontroller varmeforsyning og indstillinger, opstartstid om morgenen, indblæsningstemperatur og træk.",
+            "summary": "For koldt i fyringssæsonen. Kontroller varmeforsyning og indstillinger, opstart om morgenen, "
+            "indblæsningstemperatur og træk.",
         },
-        "summer_undercooling": {
-            "action": "Undgå for lave temperaturer om sommeren",
-            "title": "Undgå for lave temperaturer om sommeren i {room}",
-            "description": "I sommerhalvåret er lokalet for koldt {pct} af tiden ({hours} timer). Det kan skyldes "
-            "overkøling eller for kraftig ventilation med kold udeluft. Gennemgå setpunkterne for køling og ventilation.",
-            "benefit": "Fjerner op til {pct0} af timerne med for lav temperatur",
+        "temperature_control": {
+            "action": "Stabiliser temperaturreguleringen",
+            "title": "Stabiliser temperaturreguleringen i {room}",
+            "description": "I fyringssæsonen er lokalet både under {lower} °C ({below} af brugstiden) og over {upper} °C "
+            "({above}). Kontroller termostaternes placering og indstilling, indregulering af ventiler og samspillet "
+            "mellem varme, ventilation og solindfald.",
+            "summary": "Både for koldt og for varmt i fyringssæsonen. Kontroller termostater, indregulering og "
+            "samspillet mellem varme og ventilation.",
         },
-        "winter_solar_gain": {
-            "action": "Udnyt solvarmen bedre om vinteren",
-            "title": "Udnyt solvarmen bedre om vinteren i {room}",
-            "description": "Om vinteren er der kraftig solindstråling {pct} af tiden ({hours} timer), mens lokalet er "
-            "koldt. Det er et uudnyttet passivt varmetilskud. Overvej automatisk styret solafskærmning, så solen kan "
-            "varme lokalet på solrige vinterdage.",
-            "benefit": "Mulig besparelse på opvarmning: ca. {kwh} kWh pr. vinter",
+        "dry_air": {
+            "action": "Se på tør luft om vinteren",
+            "title": "Se på tør luft om vinteren i {room}",
+            "description": "I fyringssæsonen er den relative luftfugtighed under 25 % i {pct} af brugstiden. Tør luft er "
+            "almindelig ved stor udeluftmængde i koldt vejr; sørg for, at ventilationen ikke kører mere end nødvendigt "
+            "uden for brugstiden. Befugtning kan sjældent betale sig, medmindre brugerne klager.",
+            "summary": "Tør luft i fyringssæsonen. Sørg for, at ventilationen ikke kører mere end nødvendigt uden for "
+            "brugstiden; befugtning kan sjældent betale sig.",
         },
-        "summer_solar_excess": {
-            "action": "Begræns solvarmen om sommeren",
-            "title": "Begræns solvarmen om sommeren i {room}",
-            "description": "Om sommeren bidrager kraftig solindstråling til overtemperatur {pct} af tiden ({hours} "
-            "timer), hvilket forringer komforten. Etabler udvendig solafskærmning (automatiske persienner, lameller "
-            "eller solfilm), skygge fra beplantning, eller overvej solafskærmende glas.",
-            "benefit": "Mulig reduktion af varmebelastningen: ca. {kwh} kWh pr. sommer",
+        "humid_air": {
+            "action": "Se på høj luftfugtighed",
+            "title": "Se på høj luftfugtighed i {room}",
+            "description": "Den relative luftfugtighed er over 60 % i {pct} af brugstiden. Kontroller ventilation og "
+            "fugtkilder; vedvarende høj fugt øger risikoen for skimmel.",
+            "summary": "Høj luftfugtighed i brugstiden. Kontroller ventilation og fugtkilder.",
         },
     },
+}
+SOLAR_NOTE = {
+    "en": " (the solar effect cannot be separated without outdoor temperature data)",
+    "da": " (solens bidrag kan ikke adskilles uden målinger af udetemperaturen)",
 }
 
 
@@ -179,325 +329,102 @@ def _number(value: Optional[float], digits: int, language: str) -> str:
         return "–"
     text = f"{value:,.{digits}f}"
     if language == "da":
-        text = text.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
+        text = text.replace(",", " ").replace(".", ",").replace(" ", ".")
     return text
 
 
 def _percent(value: Optional[float], digits: int, language: str) -> str:
-    return f"{_number(value, digits, language)}\u00a0%" if language == "da" else f"{_number(value, digits, language)}%"
+    sep = " " if language == "da" else ""
+    return f"{_number(value, digits, language)}{sep}%"
 
 
 class SmartRecommendationsModel:
-    """
-    Rule-based recommendations for the report. Texts come from
-    :data:`RECOMMENDATION_TEXTS` in the requested language ("en" or "da").
-    """
+    """Recommendations from :class:`RoomEvidence`; texts in "en" or "da"."""
 
     def __init__(self, language: str = "en") -> None:
         self.language = language if language in RECOMMENDATION_TEXTS else "en"
 
-    def _make(
-        self,
-        key: str,
-        rec_type: RecommendationType,
-        priority: str,
-        room_name: str,
-        params: Optional[Dict[str, Optional[float]]] = None,
-        evidence: Optional[Dict[str, float]] = None,
-        with_benefit: bool = True,
-    ) -> SmartRecommendation:
-        lang = self.language
-        texts = RECOMMENDATION_TEXTS[lang][key]
-        p = params or {}
-        fmt = {
-            "room": room_name,
-            "gain": _number(p.get("gain"), 1, lang),
-            "ach": _number(p.get("ach"), 2, lang),
-            "pct": _percent(p.get("pct"), 1, lang),
-            "pct0": _percent(p.get("pct"), 0, lang),
-            "hours": _number(p.get("hours"), 0, lang),
-            "kwh": _number(p.get("kwh"), 0, lang),
-        }
-        benefit = texts["benefit"].format(**fmt) if with_benefit and "benefit" in texts else None
+    def _make(self, key: str, rec_type: RecommendationType, priority: str, room: str, values: Dict[str, str],
+              evidence: Dict[str, Optional[float]], benefit: bool = False, metric: Optional[float] = None,
+              metric_kind: Optional[str] = None) -> SmartRecommendation:
+        texts = RECOMMENDATION_TEXTS[self.language][key]
+        fmt = {"room": room, **values}
         return SmartRecommendation(
             title=texts["title"].format(**fmt),
             type=rec_type,
             priority=priority,
             description=texts["description"].format(**fmt),
-            expected_benefit=benefit,
-            evidence=evidence,
+            expected_benefit=texts["benefit"].format(**fmt) if benefit and "benefit" in texts else None,
+            evidence={k: v for k, v in evidence.items() if v is not None},
             key=key,
             action=texts["action"],
+            summary=texts["summary"],
+            metric=metric,
+            metric_kind=metric_kind,
         )
 
-    def _ventilation_recommendation(
-        self,
-        room_name: str,
-        co2_compliance: Optional[float],
-        ventilation_result: Optional[VentilationRateResult],
-        scenarios: ScenarioImpactSummary,
-    ) -> Optional[SmartRecommendation]:
-        if ventilation_result is None:
-            return None
+    def generate(self, room_name: str, ev: RoomEvidence) -> List[SmartRecommendation]:
+        lang = self.language
+        n = lambda v, d=0: _number(v, d, lang)  # noqa: E731
+        pct = lambda v: _percent(v, 0, lang)  # noqa: E731
+        recs: List[SmartRecommendation] = []
 
-        # Measured CO2 during use decides. The decay-based air change rate is only a
-        # fallback: decays mostly happen after hours, when mechanical ventilation is
-        # often off, so a low value alone does not show a problem during lessons.
-        if co2_compliance is not None:
-            need_upgrade = co2_compliance < 90.0
-        else:
-            need_upgrade = ventilation_result.ach < 2.0
-        if not need_upgrade:
-            return None
+        # CO₂ during use
+        if ev.co2_share_above_1000 is not None and ev.co2_share_above_1000 >= TRIGGER:
+            factor = ev.airflow_factor
+            recs.append(self._make(
+                "ventilation", RecommendationType.VENTILATION, _priority(ev.co2_share_above_1000), room_name,
+                {"hours": n(ev.co2_hours_above_1000), "pct": pct(ev.co2_share_above_1000), "p95": n(ev.co2_p95),
+                 "factor": n(factor, 1), "limit": n(ev.co2_limit)},
+                {"co2_share_above_1000_pct": ev.co2_share_above_1000, "co2_hours_above_1000": ev.co2_hours_above_1000,
+                 "co2_p95": ev.co2_p95, "airflow_factor": factor},
+                benefit=factor is not None and factor >= 1.05, metric=factor, metric_kind="airflow_factor",
+            ))
 
-        scenario = scenarios.ventilation
-        gain = scenario.metrics.get("co2_compliance_gain") if scenario else None
-        return self._make(
-            "ventilation",
-            RecommendationType.VENTILATION,
-            "high" if (co2_compliance or 100.0) < 80.0 else "medium",
-            room_name,
-            {"gain": gain, "ach": scenario.metrics.get("target_ach") if scenario else None},
-            {"ach": ventilation_result.ach, "co2_compliance": co2_compliance or 0.0},
-            with_benefit=bool(gain),
-        )
+        # Too warm outside the heating season (one recommendation: solar or general)
+        warm = ev.cool_share_above or 0.0
+        too_many_hours = (ev.hours_above_26 or 0.0) > 100.0
+        if warm >= TRIGGER or too_many_hours:
+            priority = "high" if too_many_hours else _priority(warm)
+            values = {"upper": n(ev.cool_band[1]), "pct": pct(ev.cool_share_above), "hours": n(ev.hours_above_26),
+                      "k": n(ev.solar_k_per_100, 1), "avoided": n(ev.solar_hours_avoided),
+                      "solar_note": "" if ev.has_outdoor_temperature else SOLAR_NOTE[lang]}
+            evidence = {"cool_share_above_pct": ev.cool_share_above, "hours_above_26": ev.hours_above_26,
+                        "hours_above_27": ev.hours_above_27, "solar_k_per_100_w_m2": ev.solar_k_per_100,
+                        "solar_hours_avoided": ev.solar_hours_avoided}
+            if ev.solar_hours_avoided is not None and ev.solar_hours_avoided >= 10:
+                recs.append(self._make("solar_shading", RecommendationType.SOLAR_SHADING, priority, room_name, values,
+                                       evidence, benefit=True, metric=ev.solar_hours_avoided, metric_kind="hours_avoided"))
+            else:
+                recs.append(self._make("summer_overheating", RecommendationType.OVERHEATING, priority, room_name,
+                                       values, evidence))
 
-    def _solar_shading_recommendation(
-        self,
-        room_name: str,
-        temp_compliance: Optional[float],
-        correlations: ClimateCorrelationResult,
-        scenarios: ScenarioImpactSummary,
-    ) -> Optional[SmartRecommendation]:
-        if temp_compliance is None or temp_compliance > 85.0:
-            return None
-        if correlations.temperature_vs_solar is None or correlations.temperature_vs_solar < 0.35:
-            return None
-        scenario = scenarios.solar_shading
-        gain = scenario.metrics.get("temp_compliance_gain") if scenario else None
-        return self._make(
-            "solar_shading",
-            RecommendationType.SOLAR_SHADING,
-            "medium",
-            room_name,
-            {"gain": gain},
-            {"temp_vs_solar_corr": correlations.temperature_vs_solar or 0.0, "temp_compliance": temp_compliance},
-            with_benefit=bool(gain),
-        )
+        # Heating season: too cold, too warm, or both
+        above, below = ev.heat_share_above or 0.0, ev.heat_share_below or 0.0
+        heat_values = {"upper": n(ev.heat_band[1]), "lower": n(ev.heat_band[0]), "mean": n(ev.heat_mean, 1),
+                       "above": pct(ev.heat_share_above), "below": pct(ev.heat_share_below)}
+        heat_evidence = {"heat_share_above_pct": ev.heat_share_above, "heat_share_below_pct": ev.heat_share_below,
+                         "heat_mean": ev.heat_mean}
+        if above >= TRIGGER and below >= TRIGGER:
+            recs.append(self._make("temperature_control", RecommendationType.HEATING, _priority(max(above, below)),
+                                   room_name, heat_values, heat_evidence))
+        elif below >= TRIGGER:
+            recs.append(self._make("too_cold", RecommendationType.HEATING, _priority(below), room_name,
+                                   {**heat_values, "pct": pct(below)}, heat_evidence))
+        elif above >= TRIGGER:
+            recs.append(self._make("heating_overheating", RecommendationType.HEATING, _priority(above), room_name,
+                                   {**heat_values, "pct": pct(above)}, heat_evidence))
 
-    def _envelope_recommendation(
-        self,
-        room_name: str,
-        temp_compliance: Optional[float],
-        correlations: ClimateCorrelationResult,
-    ) -> Optional[SmartRecommendation]:
-        if temp_compliance is None or temp_compliance > 75.0:
-            return None
-        if correlations.temperature_vs_outdoor is None or correlations.temperature_vs_outdoor > -0.2:
-            return None
-        return self._make(
-            "envelope",
-            RecommendationType.ENVELOPE,
-            "medium",
-            room_name,
-            evidence={"temp_vs_outdoor_corr": correlations.temperature_vs_outdoor or 0.0, "temp_compliance": temp_compliance},
-        )
+        # Humidity: information, low priority
+        if ev.rh_share_below_25 is not None and ev.rh_share_below_25 >= 20.0:
+            recs.append(self._make("dry_air", RecommendationType.HUMIDITY, "low", room_name,
+                                   {"pct": pct(ev.rh_share_below_25)}, {"rh_share_below_25_pct": ev.rh_share_below_25}))
+        if ev.rh_share_above_60 is not None and ev.rh_share_above_60 >= 10.0:
+            recs.append(self._make("humid_air", RecommendationType.HUMIDITY, "medium" if ev.rh_share_above_60 >= 25 else "low",
+                                   room_name, {"pct": pct(ev.rh_share_above_60)}, {"rh_share_above_60_pct": ev.rh_share_above_60}))
 
-    def _operational_recommendation(
-        self,
-        room_name: str,
-        humidity_compliance: Optional[float],
-    ) -> Optional[SmartRecommendation]:
-        if humidity_compliance is None or humidity_compliance > 90.0:
-            return None
-        return self._make(
-            "humidity", RecommendationType.OPERATIONAL, "low", room_name,
-            evidence={"humidity_compliance": humidity_compliance},
-        )
+        order = {"high": 0, "medium": 1, "low": 2}
+        return sorted(recs, key=lambda r: order.get(r.priority, 3))
 
-    def _winter_overheating_recommendation(
-        self,
-        room_name: str,
-        correlations: ClimateCorrelationResult,
-    ) -> Optional[SmartRecommendation]:
-        """Generate recommendation for winter overheating issues."""
-        seasonal = correlations.seasonal_thermal
-        if seasonal is None or seasonal.winter_overheating_percentage is None:
-            return None
-        # Threshold: significant overheating if >10% of winter hours are too hot
-        if seasonal.winter_overheating_percentage < 10.0:
-            return None
-        return self._make(
-            "winter_overheating",
-            RecommendationType.SEASONAL_CONTROL,
-            "high" if seasonal.winter_overheating_percentage > 25.0 else "medium",
-            room_name,
-            {"pct": seasonal.winter_overheating_percentage, "hours": seasonal.winter_overheating_hours},
-            {
-                "winter_overheating_pct": seasonal.winter_overheating_percentage,
-                "winter_overheating_hours": seasonal.winter_overheating_hours,
-                "winter_avg_temp": seasonal.winter_avg_temp,
-                "winter_max_temp": seasonal.winter_max_temp,
-            },
-        )
 
-    def _summer_undercooling_recommendation(
-        self,
-        room_name: str,
-        correlations: ClimateCorrelationResult,
-    ) -> Optional[SmartRecommendation]:
-        """Generate recommendation for summer undercooling issues."""
-        seasonal = correlations.seasonal_thermal
-        if seasonal is None or seasonal.summer_undercooling_percentage is None:
-            return None
-        # Threshold: significant undercooling if >10% of summer hours are too cold
-        if seasonal.summer_undercooling_percentage < 10.0:
-            return None
-        return self._make(
-            "summer_undercooling",
-            RecommendationType.SEASONAL_CONTROL,
-            "medium" if seasonal.summer_undercooling_percentage > 20.0 else "low",
-            room_name,
-            {"pct": seasonal.summer_undercooling_percentage, "hours": seasonal.summer_undercooling_hours},
-            {
-                "summer_undercooling_pct": seasonal.summer_undercooling_percentage,
-                "summer_undercooling_hours": seasonal.summer_undercooling_hours,
-                "summer_avg_temp": seasonal.summer_avg_temp,
-                "summer_min_temp": seasonal.summer_min_temp,
-            },
-        )
-
-    def _solar_gain_opportunity_recommendation(
-        self,
-        room_name: str,
-        correlations: ClimateCorrelationResult,
-    ) -> Optional[SmartRecommendation]:
-        """Generate recommendation for missed solar gain opportunities in winter."""
-        solar = correlations.solar_gain_utilization
-        if solar is None or solar.winter_solar_gain_opportunity_percentage is None:
-            return None
-        # Threshold: significant missed opportunity if >15% of winter hours
-        if solar.winter_solar_gain_opportunity_percentage < 15.0:
-            return None
-        kwh = solar.winter_missed_heating_offset_kwh
-        return self._make(
-            "winter_solar_gain",
-            RecommendationType.SOLAR_MANAGEMENT,
-            "medium" if solar.winter_solar_gain_opportunity_percentage > 30.0 else "low",
-            room_name,
-            {"pct": solar.winter_solar_gain_opportunity_percentage, "hours": solar.winter_solar_gain_opportunity_hours, "kwh": kwh},
-            {
-                "winter_solar_opportunity_pct": solar.winter_solar_gain_opportunity_percentage,
-                "winter_solar_opportunity_hours": solar.winter_solar_gain_opportunity_hours,
-                "winter_missed_heating_kwh": kwh,
-                "winter_avg_solar": solar.winter_avg_solar_radiation,
-            },
-            with_benefit=bool(kwh and kwh > 0),
-        )
-
-    def _solar_excess_recommendation(
-        self,
-        room_name: str,
-        correlations: ClimateCorrelationResult,
-    ) -> Optional[SmartRecommendation]:
-        """Generate recommendation for excess solar gains in summer."""
-        solar = correlations.solar_gain_utilization
-        if solar is None or solar.summer_excess_solar_percentage is None:
-            return None
-        # Threshold: significant excess if >15% of summer hours
-        if solar.summer_excess_solar_percentage < 15.0:
-            return None
-        kwh = solar.summer_excess_cooling_load_kwh
-        return self._make(
-            "summer_solar_excess",
-            RecommendationType.SOLAR_MANAGEMENT,
-            "high" if solar.summer_excess_solar_percentage > 30.0 else "medium",
-            room_name,
-            {"pct": solar.summer_excess_solar_percentage, "hours": solar.summer_excess_solar_hours, "kwh": kwh},
-            {
-                "summer_excess_solar_pct": solar.summer_excess_solar_percentage,
-                "summer_excess_solar_hours": solar.summer_excess_solar_hours,
-                "summer_excess_cooling_kwh": kwh,
-                "summer_avg_solar": solar.summer_avg_solar_radiation,
-            },
-            with_benefit=bool(kwh and kwh > 0),
-        )
-
-    def generate(
-        self,
-        room_name: str,
-        compliance: Dict[str, Optional[float]],
-        correlations: ClimateCorrelationResult,
-        ventilation_result: Optional[VentilationRateResult],
-        scenarios: ScenarioImpactSummary,
-    ) -> List[SmartRecommendation]:
-        recommendations: List[SmartRecommendation] = []
-
-        # Existing recommendations
-        rec = self._ventilation_recommendation(
-            room_name,
-            compliance.get("co2"),
-            ventilation_result,
-            scenarios,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        rec = self._solar_shading_recommendation(
-            room_name,
-            compliance.get("temperature"),
-            correlations,
-            scenarios,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        rec = self._envelope_recommendation(
-            room_name,
-            compliance.get("temperature"),
-            correlations,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        rec = self._operational_recommendation(
-            room_name,
-            compliance.get("humidity"),
-        )
-        if rec:
-            recommendations.append(rec)
-
-        # New seasonal and solar recommendations
-        rec = self._winter_overheating_recommendation(
-            room_name,
-            correlations,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        rec = self._summer_undercooling_recommendation(
-            room_name,
-            correlations,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        rec = self._solar_gain_opportunity_recommendation(
-            room_name,
-            correlations,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        rec = self._solar_excess_recommendation(
-            room_name,
-            correlations,
-        )
-        if rec:
-            recommendations.append(rec)
-
-        # Sort by priority (high -> medium -> low)
-        priority_order = {"high": 0, "medium": 1, "low": 2}
-        recommendations.sort(key=lambda r: priority_order.get(r.priority, 3))
-
-        return recommendations
+__all__ = ["SmartRecommendationsModel", "SmartRecommendation", "RecommendationType", "RoomEvidence", "RECOMMENDATION_TEXTS"]
