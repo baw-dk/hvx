@@ -92,7 +92,8 @@ def test_limits_come_from_en16798_config():
     assert en16798_limits("summer").bounds("II", "temperature") == (23.0, 26.0)
     assert category_now({"temperature": 22.0, "co2": 800, "humidity": 40}, winter) == "I"
     assert category_now({"temperature": 22.0, "co2": 1100, "humidity": 40}, winter) == "II"
-    assert category_now({"temperature": 30.0}, winter) is None
+    assert category_now({"temperature": 30.0}, winter) == "IV"  # IV: outside Category III
+    assert category_now({}, winter) is None
 
 
 def test_home_assistant_source(fake_ha):

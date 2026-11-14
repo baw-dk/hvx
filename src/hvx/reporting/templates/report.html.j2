@@ -141,7 +141,7 @@
 <section class="kpis" aria-label="{{ _('Key figures') }}">
   <div class="card kpi"><div class="value">{{ s.ieq_score | num }}</div><div class="label">{{ _("IEQ score (0–100)") }}</div></div>
   <div class="card kpi"><div class="value">{{ s.meets_target_pct | pct(0) }}</div><div class="label">{{ _("Rooms meeting Category {cat}", cat=cfg.target_category) }}</div></div>
-  <div class="card kpi"><div class="value">{% if s.category %}<span class="cat cat-{{ s.category }}">{{ s.category }}</span>{% else %}<span class="cat cat-none">&lt;IV</span>{% endif %}</div><div class="label">{{ _("Portfolio category ({pct}% rule)", pct=((cfg.group_category_threshold * 100) | round | int)) }}</div></div>
+  <div class="card kpi"><div class="value">{% if s.category %}<span class="cat cat-{{ s.category }}">{{ s.category }}</span>{% else %}<span class="cat cat-none">–</span>{% endif %}</div><div class="label">{{ _("Portfolio category ({pct}% rule)", pct=((cfg.group_category_threshold * 100) | round | int)) }}</div></div>
   <div class="card kpi"><div class="value">{{ s.rooms_analysed }}<span class="muted" style="font-size:16px"> / {{ s.rooms_total }}</span></div><div class="label">{{ _("Rooms analysed ({pct} coverage)", pct=(s.coverage_pct | pct(0))) }}</div></div>
   <div class="card kpi"><div class="value">{{ report.buildings | length }}</div><div class="label">{{ _("Buildings") }}</div></div>
 </section>
@@ -322,7 +322,7 @@
       <div class="muted small">{{ [r.building_name, r.floor_name, r.room_type and _(r.room_type)] | select | join(" · ") }}{% if r.area_m2 %} · {{ r.area_m2 | num(0, "m²") }}{% endif %}</div>
     </div>
     <div>
-      {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="{{ _('Below Category IV') }}">&lt;IV</span>{% else %}<span class="cat cat-none">–</span>{% endif %}
+      {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% else %}<span class="cat cat-none">–</span>{% endif %}
       <span class="pill {{ r.ieq_score | level }}">{{ _("Score") }} {{ r.ieq_score | num }}</span>
       {% if r.br18_pass is not none %}<span class="pill" title="{{ r.br18_failed | map('translate') | join('; ') }}">BR18 {{ _("pass") if r.br18_pass else _("fail") }}</span>{% endif %}
     </div>
@@ -345,7 +345,7 @@
   {% endif %}
   {% if r.seasons | length > 1 %}
   <p class="small muted">{{ _("By season") }}:
-    {% for se in r.seasons %}{{ _("{season} {cat} ({pct} within target)", season=(_(se.season) | capitalize), cat=(se.achieved_category or "<IV"), pct=(se.compliance_pct | pct(0))) }}{% if not loop.last %} · {% endif %}{% endfor %}
+    {% for se in r.seasons %}{{ _("{season} {cat} ({pct} within target)", season=(_(se.season) | capitalize), cat=(se.achieved_category or "–"), pct=(se.compliance_pct | pct(0))) }}{% if not loop.last %} · {% endif %}{% endfor %}
   </p>
   {% endif %}
   {% if r.exceedance_hours %}
@@ -397,7 +397,7 @@
     <tr>
       <td>{{ r.building_name or "–" }}</td><td>{{ r.floor_name or "–" }}</td>
       <td>{{ r.room_name }}{% if r.status != "ok" %} <span class="pill">{{ _("no data") if r.status == "no_data" else _("error") }}</span>{% endif %}</td>
-      <td data-v="{{ r.achieved_category or ('Y' if r.below_category_iv else 'Z') }}">{% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="{{ _('Below Category IV') }}">&lt;IV</span>{% else %}–{% endif %}</td>
+      <td data-v="{{ r.achieved_category or 'Z' }}">{% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% else %}–{% endif %}</td>
       <td class="num {{ r.ieq_score | level }}" data-v="{{ r.ieq_score if r.ieq_score is not none else -1 }}">{{ r.ieq_score | num }}</td>
       {% for p in ["temperature", "co2", "humidity"] %}
       {% set v = r.compliance.get(p) %}
@@ -432,12 +432,13 @@
 <h2>{{ _("Method") }}</h2>
 <div class="card small">
   <ul class="findings">
-    <li>{{ _("<strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). The achieved category is the best category whose limits are met for the share of time the standard requires.") | safe }}</li>
+    <li>{{ _("<strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). Each parameter reaches the best category whose limits it meets in at least 95 % of its measured occupied hours, and the room takes its worst parameter; Category IV is anything outside Category III. CO₂ limits are 550/800/1350 ppm above an assumed outdoor level of 400 ppm (950/1200/1750 ppm). Relative humidity is reported but counts towards the category only in rooms with humidity control, because EN 16798-1 gives humidity criteria for dimensioning (de)humidification.") | safe }}</li>
     <li>{% if cfg.seasons | length > 1 %}{{ _("<strong>Seasons.</strong> Data is split into the country's heating and cooling months; each part is assessed with its own criteria, and a room's category is its worst seasonal category.") | safe }}{% else %}{{ _("<strong>Seasons.</strong> All data is assessed with {season} criteria.", season=_(cfg.seasons[0])) | safe }}{% endif %}</li>
+    {% if "summer" in cfg.seasons or "all_year" in cfg.seasons %}<li>{{ _("<strong>Outside the heating season</strong> the fixed cooling-season ranges are used (Category II 23–26 °C). They assume a cooled building; for buildings without mechanical cooling EN 16798-1 uses the adaptive model, which needs outdoor temperature and the room's ventilation type (natural or mixed). Rooms that are too cool in summer by these ranges may be comfortable by the adaptive model.") | safe }}</li>{% endif %}
     <li>{% if cfg.occupied_only %}{{ _("<strong>Assessed hours.</strong> Standards are applied to occupied hours only ({hours}); the air-change estimate uses all hours. Hours above limits are weighted by each sample's duration.", hours=(occ | join("; ") | e)) | safe }}{% else %}{{ _("<strong>Assessed hours.</strong> All hours are assessed.") | safe }}{% endif %}</li>
     <li>{{ _("<strong>Compliance %.</strong> Share of samples within Category {cat} limits, per parameter. Parameters below {pct} are listed as issues.", cat=cfg.target_category, pct=(cfg.issue_threshold_pct | pct(0))) | safe }}</li>
     <li>{{ _("<strong>IEQ score.</strong> Weighted mean of parameter compliance ({weights}; weights renormalised over available parameters).", weights=score_weights) | safe }}</li>
-    <li>{{ _("<strong>Building and portfolio category.</strong> The best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.", pct=((cfg.group_category_threshold * 100) | pct(0))) | safe }}</li>
+    <li>{{ _("<strong>Building and portfolio category.</strong> An hvx summary, not part of EN 16798-1: the best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.", pct=((cfg.group_category_threshold * 100) | pct(0))) | safe }}</li>
     {% for note in cfg.notes %}<li>{{ note }}</li>{% endfor %}
     <li>{{ _("<strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.") | safe }}</li>
   </ul>

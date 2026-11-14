@@ -72,7 +72,7 @@ class RoomReport:
     tail: Dict[str, Any] = field(default_factory=dict)  # TAIL overall/domains/parameters, worst across seasons
     br18_pass: Optional[bool] = None
     br18_failed: List[str] = field(default_factory=list)  # names of BR18 rules not met
-    below_category_iv: bool = False  # assessed, but below EN 16798 Category IV
+    below_category_iv: bool = False  # deprecated, always False: EN 16798-1 Category IV is everything outside III
 
     data_quality: Dict[str, Any] = field(default_factory=dict)
     ventilation: Optional[Dict[str, Any]] = None

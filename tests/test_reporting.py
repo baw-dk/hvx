@@ -264,16 +264,16 @@ def test_below_category_iv_rooms_rank_first_and_count_against_group():
     assert group_category({"III": 2}, 0.7) == "III"
 
 
-def test_room_below_iv_in_one_season_is_below_iv_overall():
+def test_room_takes_its_worst_season():
+    from hvx.core.semantics.ieq import IEQAssessment
     from hvx.reporting.analysis import _combine
     from hvx.reporting.model import RoomReport
-    from hvx.core.semantics.ieq import IEQAssessment
 
     report = RoomReport("r", "R")
     winter = IEQAssessment(entity_id="r", season="winter", achieved_category="II")
-    summer = IEQAssessment(entity_id="r", season="summer", achieved_category=None)
+    summer = IEQAssessment(entity_id="r", season="summer", achieved_category="IV")
     _combine(report, [winter, summer], ReportConfig(**FAST), None)
-    assert report.below_category_iv and report.achieved_category is None and report.meets_target is False
+    assert report.achieved_category == "IV" and report.meets_target is False and not report.below_category_iv
 
 
 def test_ventilation_recommendation_follows_measured_co2():
@@ -434,3 +434,11 @@ def test_tail_tree():
 def test_tail_section_in_report(portfolio):
     html = render(ReportBuilder(ReportConfig(language="da", **FAST)).build(*portfolio), "html")
     assert "tail-tree" in html and "Typisk lokale" in html and 'class="tail-badge"' in html
+
+
+def test_offset_timestamps_are_read_as_local_time():
+    from hvx.reporting.frames import to_datetime_index
+
+    idx = to_datetime_index(["2024-01-15T08:00:00+01:00", "2024-07-15T06:00:00Z", "2024-03-01 09:30"], "Europe/Copenhagen")
+    assert [str(t) for t in idx] == ["2024-01-15 08:00:00", "2024-07-15 08:00:00", "2024-03-01 09:30:00"]
+    assert str(to_datetime_index(["2024-01-15T08:00:00+01:00"])[0]) == "2024-01-15 07:00:00"  # no zone: UTC

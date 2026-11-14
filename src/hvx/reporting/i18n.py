@@ -95,7 +95,7 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "pass": "opfyldt",
         "fail": "ikke opfyldt",
         "Below Category IV": "Under kategori IV",
-        "Below IV / n.a.": "Under IV / ikke vurderet",
+        "Not rated": "Ikke vurderet",
         "Cat {cat}": "Kat. {cat}",
         "High": "Høj",
         "Medium": "Middel",
@@ -123,8 +123,10 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read the tree from left to right: each domain takes its worst parameter and the overall rating its worst domain. For a group of rooms each parameter shows the typical room (rounded mean of the rooms' ratings). Grey, dashed: not measured, so the domain is not rated.":
             "TAIL vurderer det termiske (T), akustiske (A), luftkvaliteten (I) og lysforholdene (L) fra I (bedst) til IV. Træet læses fra venstre mod højre: et domæne får sin dårligste parameter og den samlede vurdering det dårligste domæne. For en gruppe lokaler viser hver parameter det typiske lokale (afrundet gennemsnit af lokalernes vurdering). Grå, stiplet: ikke målt, så domænet vurderes ikke.",
         # --- method section
-        "<strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). The achieved category is the best category whose limits are met for the share of time the standard requires.":
-            "<strong>Standard.</strong> Lokalerne vurderes efter DS/EN 16798-1 (samt TAIL og BR18, hvor de er relevante). Den opnåede kategori er den bedste kategori, hvis grænser overholdes i den andel af tiden, standarden kræver.",
+        "<strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). Each parameter reaches the best category whose limits it meets in at least 95 % of its measured occupied hours, and the room takes its worst parameter; Category IV is anything outside Category III. CO₂ limits are 550/800/1350 ppm above an assumed outdoor level of 400 ppm (950/1200/1750 ppm). Relative humidity is reported but counts towards the category only in rooms with humidity control, because EN 16798-1 gives humidity criteria for dimensioning (de)humidification.":
+            "<strong>Standard.</strong> Lokalerne vurderes efter DS/EN 16798-1 (samt TAIL og BR18, hvor de er relevante). Hver parameter opnår den bedste kategori, hvis grænser den overholder i mindst 95 % af de målte brugstimer, og lokalet får sin dårligste parameter; kategori IV er alt uden for kategori III. CO₂-grænserne er 550/800/1350 ppm over et antaget udeniveau på 400 ppm (950/1200/1750 ppm). Den relative luftfugtighed vises, men tæller kun med i kategorien i lokaler med fugtstyring, da DS/EN 16798-1 angiver fugtkriterier til dimensionering af befugtning og affugtning.",
+        "<strong>Outside the heating season</strong> the fixed cooling-season ranges are used (Category II 23–26 °C). They assume a cooled building; for buildings without mechanical cooling EN 16798-1 uses the adaptive model, which needs outdoor temperature and the room's ventilation type (natural or mixed). Rooms that are too cool in summer by these ranges may be comfortable by the adaptive model.":
+            "<strong>Uden for fyringssæsonen</strong> bruges de faste intervaller for kølesæsonen (kategori II 23–26 °C). De forudsætter en bygning med køling; for bygninger uden mekanisk køling bruger DS/EN 16798-1 den adaptive model, som kræver udetemperatur og lokalets ventilationsform (naturlig eller hybrid). Lokaler, der efter disse intervaller er for kølige om sommeren, kan være komfortable efter den adaptive model.",
         "<strong>Seasons.</strong> Data is split into the country's heating and cooling months; each part is assessed with its own criteria, and a room's category is its worst seasonal category.":
             "<strong>Sæsoner.</strong> Data deles i fyringssæson (oktober–april) og sommerhalvår (maj–september); hver del vurderes med sine egne kriterier, og lokalets kategori er den dårligste af de to.",
         "<strong>Seasons.</strong> All data is assessed with {season} criteria.":
@@ -137,8 +139,8 @@ CATALOG: Dict[str, Dict[str, str]] = {
             "<strong>Overholdelse i %.</strong> Andel af målingerne inden for kategori {cat}-grænserne pr. parameter. Parametre under {pct} nævnes som problemer.",
         "<strong>IEQ score.</strong> Weighted mean of parameter compliance ({weights}; weights renormalised over available parameters).":
             "<strong>Indeklimascore.</strong> Vægtet gennemsnit af overholdelsen pr. parameter ({weights}; vægtene fordeles på de målte parametre).",
-        "<strong>Building and portfolio category.</strong> The best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.":
-            "<strong>Bygningens og den samlede kategori.</strong> Den bedste kategori, som mindst {pct} af de vurderede lokaler opnår. Gennemsnit er arealvægtede, når alle lokaler har et areal.",
+        "<strong>Building and portfolio category.</strong> An hvx summary, not part of EN 16798-1: the best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.":
+            "<strong>Bygningens og den samlede kategori.</strong> En opsummering i hvx, ikke en del af DS/EN 16798-1: den bedste kategori, som mindst {pct} af de vurderede lokaler opnår. Gennemsnit er arealvægtede, når alle lokaler har et areal.",
         "<strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.":
             "<strong>Identifikation.</strong> Brick-klasser og IFC GlobalId for alle lokaler findes i JSON- og CSV-udtrækket.",
         # --- parameters, seasons, periods

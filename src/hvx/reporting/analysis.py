@@ -45,6 +45,7 @@ class RoomTask:
     building_type: Optional[str] = None
     climate: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     holiday_periods: List[Any] = field(default_factory=list)  # from building/portfolio metadata
+    timezone: Optional[str] = None  # IANA zone for timestamps with a UTC offset (building metadata "timezone")
 
 
 def _round(value: Optional[float], digits: int = 1) -> Optional[float]:
@@ -109,7 +110,10 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
     building_type = (task.building_type or room.building_type or config.default_building_type)
     building_type = str(building_type).lower()
 
-    df, warnings = room_frame(room.timeseries_data, room.timestamps, climate_frame(task.climate))
+    from .frames import COUNTRY_TIMEZONES
+
+    tz = task.timezone or COUNTRY_TIMEZONES.get(str(country).upper())
+    df, warnings = room_frame(room.timeseries_data, room.timestamps, climate_frame(task.climate, tz), tz)
     report.warnings.extend(warnings)
     if df is None or df.empty:
         report.status = "no_data"
@@ -253,17 +257,13 @@ def _data_quality(df: pd.DataFrame) -> Dict[str, Any]:
 
 def _combine(report: RoomReport, assessments: List[IEQAssessment], config: ReportConfig, df: pd.DataFrame) -> None:
     report.assessments = [a.model_dump(mode="json") for a in assessments]
-    categories = [a.achieved_category for a in assessments]
-    if assessments and any(c is None for c in categories):
-        # Assessed but not even Category IV in some season: the worst possible outcome.
-        report.below_category_iv = True
-        report.achieved_category = None
-        report.meets_target = False
-    else:
-        worst = ComfortCategory.worst(*categories)
-        report.achieved_category = worst.value if worst else None
-        if worst is not None:
-            report.meets_target = worst.rank <= ComfortCategory(config.target_category).rank
+    # EN 16798-1 Category IV is everything outside Category III, so every assessed season has
+    # a category; the room takes its worst season.
+    categories = [a.achieved_category for a in assessments if a.achieved_category is not None]
+    worst = ComfortCategory.worst(*categories)
+    report.achieved_category = worst.value if worst else None
+    if worst is not None:
+        report.meets_target = worst.rank <= ComfortCategory(config.target_category).rank
 
     for name in IEQ_PARAMETERS:
         entries = [(a.parameters[name], a.samples or 1) for a in assessments if name in a.parameters]
@@ -429,10 +429,6 @@ def _issues(report: RoomReport, config: ReportConfig) -> List[str]:
     target = config.target_category
     if report.achieved_category and report.meets_target is False:
         issues.append(t("Achieves Category {cat}; target is Category {target}.", cat=report.achieved_category, target=target))
-    elif report.below_category_iv:
-        seasons = [t(s.season) for s in report.seasons if s.achieved_category is None and s.time_in_category_pct]
-        issues.append(t("Below EN 16798 Category IV ({seasons}); target is Category {target}.",
-                        seasons=", ".join(seasons) or t("assessed period"), target=target))
     if report.br18_failed:
         issues.append(t("BR18 not met: {rules}.", rules="; ".join(t(name) for name in report.br18_failed)))
     for name, summary in report.parameters.items():
