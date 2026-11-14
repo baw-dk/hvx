@@ -2,74 +2,65 @@ id: "tail"
 name: "TAIL Indoor Environmental Quality Rating"
 version: "2024.1"
 standard_type: "TAIL"
-description: "TAIL rating scheme for comprehensive indoor environmental quality assessment across Thermal, Acoustic, Indoor Air Quality, and Luminous domains"
+description: "TAIL rating scheme (Wargocki et al. 2021) for indoor environmental quality across the Thermal, Acoustic, Indoor Air Quality and Luminous domains"
 
 # Rating-based standard (not category-based like EN16798)
 category_based: false
 
-# TAIL rating scale
+# Source of every threshold below: the authors' reference R script `tail.R`
+# (github.com/asitkm76/TAILRatingScheme, commit c71b8b5) for
+# Wargocki et al. (2021), Energy & Buildings 244, 111029, doi:10.1016/j.enbuild.2021.111029.
+# "l.NN" = line in tail.R. This file is the single source of the TAIL thresholds:
+# hvx.standards.tail.calculator reads them from here.
+reference:
+  script: "tail.R"
+  repository: "https://github.com/asitkm76/TAILRatingScheme"
+  commit: "c71b8b5"
+  doi: "10.1016/j.enbuild.2021.111029"
+
+# TAIL rating scale (tail.R l.655-671). Parameter labels come from the
+# parameter rules below, not from a compliance percentage.
 ratings:
   - id: "I"
     value: 1
-    name: "Rating I - Excellent"
-    description: "Green - High quality (≥95% compliant)"
+    name: "Rating I"
+    description: "Green - high quality"
     color: "green"
-    min_compliance: 95.0
 
   - id: "II"
     value: 2
-    name: "Rating II - Good"
-    description: "Yellow - Good quality (70-95% compliant)"
+    name: "Rating II"
+    description: "Yellow - medium quality"
     color: "yellow"
-    min_compliance: 70.0
 
   - id: "III"
     value: 3
-    name: "Rating III - Fair"
-    description: "Orange - Fair quality (50-70% compliant)"
+    name: "Rating III"
+    description: "Orange - moderate quality"
     color: "orange"
-    min_compliance: 50.0
 
   - id: "IV"
     value: 4
-    name: "Rating IV - Poor"
-    description: "Red - Poor quality (<50% compliant)"
+    name: "Rating IV"
+    description: "Red - low quality"
     color: "red"
-    min_compliance: 0.0
 
-# TAIL categories (domains)
+# TAIL domains. A domain takes its worst parameter and the overall rating its
+# worst domain (tail.R l.379, 554-556, 590, 640, 652-653); unmeasured parameters
+# are left out. Relative humidity belongs to Indoor Air (l.554).
 domains:
   - id: "thermal"
-    name: "Thermal Comfort"
-    description: "Temperature and humidity conditions"
-    metrics:
-      - temperature
-      - humidity
-
+    name: "Thermal environment"
+    metrics: [temperature]
   - id: "acoustic"
-    name: "Acoustic Comfort"
-    description: "Noise levels and sound environment"
-    metrics:
-      - noise
-      - sound_level
-
+    name: "Acoustic environment"
+    metrics: [noise]
   - id: "iaq"
-    name: "Indoor Air Quality"
-    description: "Air quality parameters"
-    metrics:
-      - co2
-      - pm25
-      - pm10
-      - voc
-      - tvoc
-      - formaldehyde
-
+    name: "Indoor air quality"
+    metrics: [co2, relative_humidity, benzene, formaldehyde, pm25, radon, ventilation, mold]
   - id: "luminous"
-    name: "Luminous Comfort"
-    description: "Light levels and daylight"
-    metrics:
-      - illuminance
-      - daylight_factor
+    name: "Luminous environment"
+    metrics: [illuminance, daylight_factor]
 
 # Applicability
 applicability:
@@ -91,174 +82,207 @@ required_inputs:
   luminous:
     illuminance: false
 
-# Default thresholds for parameters
-default_thresholds:
-  # Thermal domain
-  temperature:
-    lower_bound: 20.0
-    upper_bound: 26.0
+# Rule that turns the time shares of Green/Yellow/Orange/Red samples into a
+# label (temperature l.351-369, RH l.450-470). Shares are fractions of the
+# occupied samples that have a value.
+#
+# tail.R lists I: G >= 94 % & O <= 1 % & R = 0; II: Y > 5 % & O <= 5 % & R <= 1 %;
+# III: O > 5 % & R <= 5 %; otherwise IV. Read literally this has gaps: 99.5 % Green
+# + 0.5 % Red, or 93 % Green + 2 % Yellow + 5 % Orange, satisfy no condition and
+# fall to IV. hvx reads the rule cumulatively: the first level whose ceilings
+# hold. Every case tail.R rates I, II or III gets the same label; only the gap
+# cases change.
+time_share_rule:
+  I:   {green_min: 0.94, orange_max: 0.01, red_max: 0.0}
+  II:  {orange_max: 0.05, red_max: 0.01}
+  III: {red_max: 0.05}
+
+parameters:
+  # Bands are nested closed intervals [low, high]: a value takes the first band
+  # (green, yellow, orange) whose interval contains it, otherwise red. This is
+  # equivalent to tail.R's "Value >= a & Value < b | Value > c & Value <= d" form.
+  temperature:  # l.82-104, label l.351-369
+    domain: thermal
     unit: "°C"
-    domain: "thermal"
-    description: "Operative temperature range"
+    round: 1                                     # l.84
+    rule: time_share
+    heating_months: [10, 11, 12, 1, 2, 3, 4, 5]  # l.85-87; June-September are non-heating
+    bands:
+      heating:                                   # l.89-94
+        green: [21.0, 23.0]
+        yellow: [20.0, 24.0]
+        orange: [19.0, 25.0]
+      non_heating:                               # l.95-100
+        green: [23.5, 25.5]
+        yellow: [23.0, 26.0]
+        orange: [22.0, 27.0]
 
-  humidity:
-    lower_bound: 30.0
-    upper_bound: 60.0
+  relative_humidity:  # l.107-128, label l.450-470
+    domain: iaq
     unit: "%"
-    domain: "thermal"
-    description: "Relative humidity range"
+    floor: 1         # l.108-109: values below 1 % are set to 1 %
+    above_100: 95    # l.110: values above 100 % are set to 95 %
+    round: 0         # l.111
+    rule: time_share
+    default_building_type: office  # tail.R only rates offices and hotels; hvx uses the office bands otherwise
+    bands:
+      office:                      # l.113-118
+        green: [30, 50]
+        yellow: [25, 60]
+        orange: [20, 70]
+      hotel:                       # l.119-123: Orange only 20-<25 %, above 60 % is Red
+        green: [30, 50]
+        yellow: [25, 60]
+        orange: [20, 60]
 
-  # Acoustic domain
-  noise:
-    upper_bound: 45.0
-    unit: "dB(A)"
-    domain: "acoustic"
-    description: "Maximum continuous noise level"
-
-  sound_level:
-    upper_bound: 45.0
-    unit: "dB(A)"
-    domain: "acoustic"
-    description: "Equivalent continuous sound level"
-
-  # Indoor Air Quality domain
-  co2:
-    upper_bound: 1000.0
+  co2:  # l.148-172, label l.388-402
+    domain: iaq
     unit: "ppm"
-    domain: "iaq"
-    description: "CO2 concentration above outdoor"
+    rule: percentile
+    percentile: 95                 # l.157
+    outdoor_ppm: 420               # l.149-153: values below outdoor are set to outdoor
+    # Upper limits (inclusive) of the 95th percentile, as ppm above outdoor:
+    # 420 + 550/800/1350 = 970/1220/1770 ppm (l.163-166).
+    above_outdoor: {green: 550, yellow: 800, orange: 1350}
 
-  pm25:
-    upper_bound: 25.0
-    unit: "μg/m³"
-    domain: "iaq"
-    description: "PM2.5 particulate matter"
+  # Pollutants with Green/Yellow/Red only (l.131-221). Negative values are
+  # dropped, values below 1 set to 0, then rounded to integers. A value is Green
+  # below green_below, Yellow below yellow_below, otherwise Red. Label: any Red
+  # sample -> IV, else any Yellow sample -> II, else I (l.479-550).
+  pm25:          # l.131-144, label l.515-527
+    domain: iaq
+    unit: "µg/m³"
+    rule: worst_sample
+    limits: {green_below: 10, yellow_below: 25}
+  formaldehyde:  # l.175-189, label l.497-509
+    domain: iaq
+    unit: "µg/m³"
+    rule: worst_sample
+    limits: {green_below: 30, yellow_below: 100}
+  benzene:       # l.192-205, label l.479-491
+    domain: iaq
+    unit: "µg/m³"
+    rule: worst_sample
+    limits: {green_below: 2, yellow_below: 5}
+  radon:         # l.208-221, label l.534-546
+    domain: iaq
+    unit: "Bq/m³"
+    rule: worst_sample
+    limits: {green_below: 100, yellow_below: 300}
 
-  pm10:
-    upper_bound: 50.0
-    unit: "μg/m³"
-    domain: "iaq"
-    description: "PM10 particulate matter"
+  ventilation:  # l.53-60 and 224-238, label l.408-422
+    domain: iaq
+    unit: "l/s"
+    round: 1                       # l.227
+    rule: worst_sample             # each sample is categorised; the label is the worst category
+    # Minimum outdoor-air supply (inclusive) = per_person * persons + per_m2 * floor area
+    per_person: {green: 10.0, yellow: 7.0, orange: 4.0}   # l.58-60
+    per_m2: {green: 2.0, yellow: 1.4, orange: 0.8}
 
-  voc:
-    upper_bound: 300.0
-    unit: "μg/m³"
-    domain: "iaq"
-    description: "Total volatile organic compounds"
+  mold:  # l.242-253, label l.429-443 (worst observation)
+    domain: iaq
+    unit: null
+    rule: worst_sample
+    # Inspection phrases exactly as tail.R expects them (case and spacing are
+    # normalised); hvx also accepts the short keys and a visible area in cm².
+    phrases:
+      green: ["No visible mold"]
+      yellow: ["Small areas visible mold, <400 cm2"]
+      orange: ["Slightly larger areas visible mold, <  2500 cm2"]
+      red: ["Large areas visible mold, > 2500 cm2"]
+    keys:
+      green: ["none", "no visible mold", "no visible mould", "no mold", "no mould"]
+      yellow: ["small"]
+      orange: ["slightly larger", "medium"]
+      red: ["large"]
+    area_cm2: {yellow_below: 400, orange_below: 2500}  # 0 cm² is Green
 
-  tvoc:
-    upper_bound: 300.0
-    unit: "μg/m³"
-    domain: "iaq"
-    description: "Total VOC concentration"
+  noise:  # l.258-287, label l.570-584
+    domain: acoustic
+    unit: "dB(A)"
+    round: 0                       # l.260
+    floor: 30                      # l.261: values below 30 dB are set to 30 dB
+    rule: percentile
+    percentile: 5                  # l.265
+    # Upper limits (inclusive) of the 5th percentile per room type (l.271-282).
+    # tail.R writes the hotel Orange band as 30 < P5 < 35 and Red as P5 > 35, so
+    # P5 = 35 dB gets no category there; hvx treats it as Orange (<=), like the
+    # other room types.
+    limits:
+      small_office: {green: 30, yellow: 35, orange: 40}
+      open_office: {green: 35, yellow: 40, orange: 45}
+      hotel: {green: 25, yellow: 30, orange: 35}
+    # hvx room types mapped onto tail.R's RoomType values (names are
+    # lower-cased, with spaces and hyphens as underscores). Other room types
+    # are not rated for noise.
+    room_types:
+      small_office: [small_office, private_office, single_office, cell_office]
+      open_office: [open_office, open_plan_office, open_plan]
+      hotel: [hotel, hotel_room]
 
-  # Luminous domain
-  illuminance:
-    lower_bound: 300.0
-    upper_bound: 2000.0
-    unit: "lux"
-    domain: "luminous"
-    description: "Illuminance on work plane"
+  illuminance:  # l.291-320, label l.599-613
+    domain: luminous
+    unit: "lx"
+    floor: 30                      # l.292
+    rule: time_share_lux
+    default_building_type: office  # tail.R only rates offices and hotels; hvx uses the office rule otherwise
+    office:                        # l.301-306: share of time within 300-500 lx
+      within_lux: [300, 500]
+      green_above_pct: 60          # > 60 %
+      yellow_min_pct: 40           # 40-60 %
+      orange_min_pct: 10           # 10-<40 %, below 10 % Red
+    hotel:                         # l.309-314: share of time at or above 100 lx
+      at_least_lux: 100
+      green_max_pct: 0             # = 0 %
+      yellow_max_pct: 50           # >0-50 %
+      orange_max_pct: 90           # >50-90 %, above 90 % Red
 
-  daylight_factor:
-    lower_bound: 2.0
+  daylight_factor:  # l.325-337, label l.620-634 (worst value)
+    domain: luminous
     unit: "%"
-    domain: "luminous"
-    description: "Daylight factor"
+    rule: worst_sample
+    min: {green: 5.0, yellow: 3.3, orange: 2.0}  # inclusive lower limits; below 2.0 Red
 
-# Building type specific thresholds
-building_type_thresholds:
-  office:
-    temperature:
-      lower_bound: 20.0
-      upper_bound: 24.0
-    co2:
-      upper_bound: 1000.0
-    illuminance:
-      lower_bound: 500.0
-      upper_bound: 2000.0
-    noise:
-      upper_bound: 40.0
+# Building types that use tail.R's "Hotel" rules (RH, illuminance; noise when
+# the room type is unknown).
+hotel_building_types: [hotel, hospitality]
 
-  school:
-    temperature:
-      lower_bound: 20.0
-      upper_bound: 24.0
-    co2:
-      upper_bound: 1200.0
-    illuminance:
-      lower_bound: 300.0
-      upper_bound: 1500.0
-    noise:
-      upper_bound: 35.0
+# Not TAIL parameters: rated with hvx's own limits and reported as extensions,
+# never part of the Indoor Air domain or the overall rating.
+extensions:
+  pm10:
+    unit: "µg/m³"
+    rule: worst_sample
+    bands: {green: [null, 30.0], yellow: [null, 50.0], orange: [null, 75.0]}
+  voc:
+    unit: "µg/m³"
+    rule: worst_sample
+    bands: {green: [null, 300.0], yellow: [null, 600.0], orange: [null, 1000.0]}
 
-  residential:
-    temperature:
-      lower_bound: 19.0
-      upper_bound: 26.0
-    co2:
-      upper_bound: 1200.0
-    illuminance:
-      lower_bound: 200.0
-      upper_bound: 1000.0
-    noise:
-      upper_bound: 45.0
-
-# Aggregation configuration for multi-level analysis
+# hvx entity-hierarchy roll-up of room results (Room -> Floor -> Building ->
+# Portfolio). Not part of TAIL: TAIL rates a building by pooling the data of
+# all monitored rooms into one distribution (tail.R l.22-66).
 aggregation:
-  # Method for aggregating ratings across rooms/floors to building level
-  # Options: "worst", "average", "weighted_average"
+  # Options: "worst", "best", "average", "weighted_average"
   spatial_method: "worst"
-  
-  # Method for aggregating domains (thermal, acoustic, iaq, luminous) within a room
-  # Options: "worst", "average", "weighted"
-  domain_method: "worst"
-  
-  # Target metric for aggregation (overall rating)
   metric: "rating"
-  
-  # Weighting for weighted domain aggregation
-  domain_weights:
-    thermal: 0.35
-    acoustic: 0.20
-    iaq: 0.30
-    luminous: 0.15
-  
-  # Weight properties for spatial weighted aggregation
   weight_properties:
     - area_m2
     - design_occupancy
-  
-  # Levels where aggregation is performed
   rollup_targets:
-    - room      # Aggregate domains within room
-    - floor     # Aggregate rooms to floor level
-    - building  # Aggregate floors to building level
-    - portfolio # Aggregate buildings to portfolio level
-  
-  # Spatial scope
+    - room
+    - floor
+    - building
+    - portfolio
   run_on_types:
     - room
-  
   rollup_from_children:
     - room
     - floor
-  
   aggregate_to_types:
     - floor
     - building
     - portfolio
-
-# Compliance calculation settings
-compliance_settings:
-  # Minimum data points required for valid assessment
-  min_data_points: 100
-
-  # Time window for assessment
-  assessment_window: "P1Y"  # ISO 8601 duration (1 year)
-
-  # Tolerance for exceedances
-  tolerance_percentage: 5.0  # Allow 5% exceedance
 
 # Analysis module
 analysis_module: "hvx.standards.tail.analysis:run"
