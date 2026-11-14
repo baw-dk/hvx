@@ -892,6 +892,114 @@ async def import_ifc_model(file: UploadFile = File(...)):
     return {"success": True, **result.summary()}
 
 
+# --- Live monitoring and ChirpStack webhook ---------------------------------
+
+import hmac  # noqa: E402
+import os  # noqa: E402
+from dataclasses import asdict  # noqa: E402
+
+from fastapi import Header, Request  # noqa: E402
+
+_live: Dict[str, Any] = {"monitor": None, "webhook_sources": {}}
+
+
+def _live_monitor():
+    monitor = _live["monitor"]
+    if monitor is None:
+        raise HTTPException(status_code=400, detail="No live site loaded; POST /api/live/site first")
+    return monitor
+
+
+@app.post("/api/live/site")
+def load_live_site(site: Dict[str, Any], window_days: float = 7.0):
+    """
+    Load a site description (same schema as the YAML site files) and start monitoring.
+    `chirpstack-http` sources are fed by POST /api/integrations/chirpstack.
+    """
+    from datetime import timedelta
+
+    from hvx.live import LiveMonitor, load_site
+    from hvx.live.sources import InMemorySource
+
+    try:
+        loaded = load_site(site)
+        sources = loaded.build_sources()
+        for source in sources.values():
+            source.start()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid site: {exc}") from exc
+    old = _live["monitor"]
+    if old is not None:
+        for source in old.sources.values():
+            source.close()
+    _live["monitor"] = LiveMonitor(*loaded.entities, sources=sources, window=timedelta(days=window_days), timezone=loaded.timezone)
+    _live["webhook_sources"] = {
+        name: src
+        for name, src in sources.items()
+        if isinstance(src, InMemorySource) and str(loaded.source_configs[name].get("type", "")).lower() == "chirpstack-http"
+    }
+    _store.load_import(loaded)
+    return {"success": True, "rooms": len(loaded.rooms), "points": len(_live["monitor"].bindings), "webhook_sources": list(_live["webhook_sources"])}
+
+
+@app.get("/api/live/snapshot")
+def live_snapshot():
+    """Refresh from all sources and return current values, alerts and the rolling assessment."""
+    from hvx.reporting.renderers.tabular import _clean
+
+    monitor = _live_monitor()
+    monitor.refresh()
+    snapshot = monitor.snapshot()
+    return _clean({**asdict(snapshot), "alerts": snapshot.alerts})
+
+
+@app.post("/api/live/report")
+def live_report(request: ReportRequest):
+    """Report over the live window (same options as /api/reports)."""
+    monitor = _live_monitor()
+    fmt = request.format.lower()
+    if fmt not in MEDIA_TYPES:
+        raise HTTPException(status_code=422, detail=f"format must be one of {sorted(MEDIA_TYPES)}")
+    monitor.refresh()
+    report = monitor.report(_report_config(request))
+    return Response(content=render(report, fmt), media_type=MEDIA_TYPES[fmt])
+
+
+@app.post("/api/integrations/chirpstack")
+async def chirpstack_webhook(
+    request: Request,
+    event: str = "up",
+    source: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Target for ChirpStack's HTTP integration (JSON or Protobuf encoding).
+
+    Configure the integration URL as `https://<hvx>/api/integrations/chirpstack` and add the
+    header `Authorization: Bearer <HVX_WEBHOOK_TOKEN>`. Without HVX_WEBHOOK_TOKEN set, the
+    endpoint refuses all deliveries.
+    """
+    from hvx.live.chirpstack import handle_http_event
+
+    expected = os.environ.get("HVX_WEBHOOK_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Set HVX_WEBHOOK_TOKEN to enable the ChirpStack webhook")
+    given = (authorization or "").removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(given, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+    targets = _live["webhook_sources"]
+    if source:
+        targets = {source: targets[source]} if source in targets else {}
+    if not targets:
+        raise HTTPException(status_code=409, detail="No chirpstack-http source in the loaded live site")
+    body = await request.body()
+    try:
+        stored = sum(handle_http_event(src, event, body, request.headers.get("content-type")) for src in targets.values())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"success": True, "event": event, "readings": stored}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

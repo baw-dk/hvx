@@ -40,13 +40,15 @@ dependencies = [
 [project.optional-dependencies]
 brick = ["rdflib>=7.0"]
 ifc = ["ifcopenshell>=0.8.0"]
+chirpstack = ["paho-mqtt>=2.0", "chirpstack-api>=4.0"]  # LoRaWAN via ChirpStack (MQTT, gRPC API)
 comfort = ["pythermalcomfort>=2.8"]  # EN 16798 adaptive model via pythermalcomfort (pulls numba)
 ml = ["scikit-learn>=1.3"]  # isolation-forest outlier detection
 api = ["fastapi>=0.109", "uvicorn[standard]>=0.27", "python-multipart>=0.0.9"]
 ui = ["streamlit>=1.32"]
-all = ["hvx[brick,ifc,comfort,ml,api]"]
+all = ["hvx[brick,ifc,chirpstack,comfort,ml,api]"]
 dev = [
-    "hvx[brick,ifc,api]",
+    "hvx[brick,ifc,chirpstack,api]",
+    "amqtt>=0.11",  # in-process MQTT broker for the ChirpStack tests
     "pytest>=7.4",
     "httpx>=0.27",
     "brickschema>=0.7",
