@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Dependency updates, consolidating the Dependabot pull requests:
+  - GitHub Actions: `actions/setup-node` 7, `actions/upload-artifact` 7,
+    `actions/download-artifact` 8, `actions/upload-pages-artifact` 5,
+    `softprops/action-gh-release` 3.
+  - `flow-editor`: `jszip` 3.10.2, `@types/node` 26, `tailwindcss` 4 (now through
+    `@tailwindcss/postcss`, which also adds vendor prefixes, so `autoprefixer` and the empty
+    `tailwind.config.js` are gone), `eslint-config-next` 16 with ESLint 9 and a flat config
+    (`eslint.config.mjs`; `npm run lint` runs `eslint .`).
+  - `flow-editor`: TypeScript 6.0 instead of the proposed 7.0. TypeScript 7 has no JavaScript
+    compiler API, which the Next.js type check and typescript-eslint need (typescript-eslint
+    supports TypeScript < 6.1). `css.d.ts` declares stylesheet imports, which TypeScript 6 checks.
+
+### Known issues
+- `flow-editor` does not build: `flow-editor/lib/` (`apiClient`, `nodeTypes`, `statisticsUtils`)
+  was never committed, because the root `.gitignore` ignores `lib/`.
+
 ## [0.4.0] - 2026-11-14
 
 ### Added
