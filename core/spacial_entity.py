@@ -6,6 +6,7 @@ Enhanced entities (Portfolio, Building, Floor, Room) are in entities.py.
 """
 
 from __future__ import annotations
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,10 @@ from .enums import (
     SpatialEntityType,
 )
 from .metering import SensorDefinition, SensorGroup, SensorSource, SensorSourceType
+from .semantics.ieq import IEQRequirements
+from .semantics.mappings import brick_class_for_room_type, spatial_mapping
+
+logger = logging.getLogger(__name__)
 
 
 class SpatialEntity(BaseModel):
@@ -54,6 +59,20 @@ class SpatialEntity(BaseModel):
 
     geometry_ref: Optional[str] = None
 
+    # --- Semantic identity (IFC / Brick alignment) -----------------------
+    ifc_guid: Optional[str] = Field(
+        default=None,
+        description="IFC GlobalId (22 chars) of the matching IfcProject/IfcBuilding/IfcBuildingStorey/IfcSpace",
+    )
+    brick_class: Optional[str] = Field(
+        default=None,
+        description="Explicit Brick class CURIE (e.g. 'brick:Conference_Room'); derived from type/room_type when unset",
+    )
+    ieq_requirements: Optional[IEQRequirements] = Field(
+        default=None,
+        description="Design IEQ targets; maps to IFC Pset_Space*Requirements and the ieq: Brick extension",
+    )
+
     # Latest TAIL analysis snapshot
     tail_rating: Optional[int] = Field(
         default=None,
@@ -78,6 +97,19 @@ class SpatialEntity(BaseModel):
     )
     computed_metrics: Dict[str, Any] = Field(default_factory=dict, exclude=True)
     access_control: List[AccessControlEntry] = Field(default_factory=list, exclude=True)
+
+    @property
+    def ifc_class(self) -> Optional[str]:
+        """IFC entity class this spatial level corresponds to (None for portfolios)."""
+        return spatial_mapping(self.type).ifc_class
+
+    def semantic_brick_class(self) -> str:
+        """Brick class CURIE: explicit override, room usage, or spatial level."""
+        if self.brick_class:
+            return self.brick_class
+        if self.type == SpatialEntityType.ROOM:
+            return brick_class_for_room_type(self.room_type)
+        return spatial_mapping(self.type).brick_class
 
     def load_sensor(
         self,
@@ -746,7 +778,7 @@ class SpatialEntity(BaseModel):
                     if ts:
                         param_data[f'{method}_timeseries'] = ts
                 except Exception as e:
-                    print(f"Warning: Could not aggregate {parameter} with {method}: {e}")
+                    logger.warning(f"Could not aggregate {parameter} with {method}: {e}")
             
             # Compute statistics
             try:
@@ -760,7 +792,7 @@ class SpatialEntity(BaseModel):
                     stats_without_values = {k: v for k, v in stats.items() if k != 'values'}
                     param_data['statistics'] = stats_without_values
             except Exception as e:
-                print(f"Warning: Could not compute statistics for {parameter}: {e}")
+                logger.warning(f"Could not compute statistics for {parameter}: {e}")
             
             if param_data:
                 aggregated[parameter] = param_data

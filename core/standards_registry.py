@@ -6,6 +6,7 @@ along with logic to determine applicability based on entity properties.
 """
 
 from __future__ import annotations
+import logging
 
 import importlib
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from typing import Any, Callable, Dict, List, Optional, Set
 import yaml
 
 from .enums import SpatialEntityType
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -246,7 +249,7 @@ class AnalysisRegistry:
                 standard_config = StandardConfig.from_yaml(config_file)
                 self.standards[standard_config.id] = standard_config
             except Exception as e:
-                print(f"Warning: Could not load standard config from {config_file}: {e}")
+                logger.warning(f"Could not load standard config from {config_file}: {e}")
         
         # Register simulations
         self._register_default_simulations()

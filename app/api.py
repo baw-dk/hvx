@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
+import tempfile
+
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
@@ -39,6 +42,10 @@ from core import (
 from standards.en16798 import analysis as en16798
 from standards.tail import analysis as tail_analysis, calculator as tail_calc
 from standards.br18 import analysis as br18
+
+# Reporting and semantic interoperability
+from reporting import MEDIA_TYPES, ReportBuilder, ReportConfig, render
+from core.semantics.ieq import IEQAssessment
 
 # Import simulations
 from simulations import (
@@ -762,6 +769,131 @@ def run_batch_analysis(request: BatchAnalysisRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Reporting -------------------------------------------------------------
+
+_SEASON_ALIASES = {"heating": "winter", "cooling": "summer"}
+
+
+class ReportRequest(BaseModel):
+    format: str = "json"  # json | html | csv
+    seasons: List[str] = ["winter"]  # winter | summer | all_year (heating/cooling accepted)
+    target_category: str = "II"
+    building_ids: Optional[List[str]] = None
+    top_n_rooms: int = 15
+    include_simulations: bool = True
+    title: Optional[str] = None
+
+
+def _require_portfolio() -> None:
+    if _store.portfolio is None:
+        raise HTTPException(status_code=400, detail="No portfolio loaded")
+
+
+def _report_config(request: ReportRequest) -> ReportConfig:
+    try:
+        return ReportConfig(
+            title=request.title,
+            seasons=tuple(_SEASON_ALIASES.get(s.lower(), s.lower()) for s in request.seasons),
+            target_category=request.target_category,
+            top_n_rooms=request.top_n_rooms,
+            include_simulations=request.include_simulations,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/reports")
+def create_report(request: ReportRequest):
+    """
+    Build an IEQ report for the loaded portfolio.
+
+    `format=json` returns the structured report (schema `hvx.ieq-report/2.0`);
+    `html` returns a self-contained page; `csv` returns one row per room.
+    """
+    _require_portfolio()
+    fmt = request.format.lower()
+    if fmt not in MEDIA_TYPES:
+        raise HTTPException(status_code=422, detail=f"format must be one of {sorted(MEDIA_TYPES)}")
+    report = ReportBuilder(_report_config(request)).build(
+        _store.portfolio, _store.buildings, _store.floors, _store.rooms, building_ids=request.building_ids
+    )
+    body = render(report, fmt)
+    headers = {}
+    if fmt != "json":
+        headers["Content-Disposition"] = f'attachment; filename="ieq-report.{fmt}"'
+    return Response(content=body, media_type=MEDIA_TYPES[fmt], headers=headers)
+
+
+# --- Semantic interoperability (Brick / IFC) --------------------------------
+
+
+@app.get("/api/semantics/brick")
+def export_brick_model(with_assessments: bool = False, season: str = "winter"):
+    """Export the portfolio as a Brick 1.4 model (Turtle), optionally with IEQ assessments."""
+    from core.semantics.brick import BrickExporter
+
+    _require_portfolio()
+    assessments = scores = None
+    if with_assessments:
+        report = ReportBuilder(
+            ReportConfig(seasons=(_SEASON_ALIASES.get(season, season),), include_simulations=False)
+        ).build(_store.portfolio, _store.buildings, _store.floors, _store.rooms)
+        assessments = {r.room_id: [IEQAssessment(**a) for a in r.assessments] for r in report.rooms}
+        scores = {r.room_id: r.ieq_score for r in report.rooms if r.ieq_score is not None}
+    try:
+        ttl = BrickExporter().serialize(
+            _store.portfolio, _store.buildings, _store.floors, _store.rooms,
+            assessments=assessments, ieq_scores=scores,
+        )
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    return Response(content=ttl, media_type="text/turtle")
+
+
+async def _upload_to_tempfile(file: UploadFile, suffix: str) -> Path:
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    with tmp:
+        tmp.write(await file.read())
+    return Path(tmp.name)
+
+
+@app.post("/api/semantics/brick/import")
+async def import_brick_model(file: UploadFile = File(...)):
+    """Replace the loaded portfolio with the spaces and points of a Brick model."""
+    from core.semantics.brick import import_brick
+
+    path = await _upload_to_tempfile(file, Path(file.filename or "model.ttl").suffix or ".ttl")
+    try:
+        result = import_brick(path)
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Could not parse Brick model: {exc}") from exc
+    finally:
+        path.unlink(missing_ok=True)
+    _store.load_import(result)
+    return {"success": True, **result.summary()}
+
+
+@app.post("/api/semantics/ifc/import")
+async def import_ifc_model(file: UploadFile = File(...)):
+    """Replace the loaded portfolio with the spatial structure of an IFC file."""
+    from core.semantics.ifc import load_ifc
+
+    path = await _upload_to_tempfile(file, ".ifc")
+    try:
+        result = load_ifc(path, portfolio_name=Path(file.filename or "model").stem)
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Could not read IFC file: {exc}") from exc
+    finally:
+        path.unlink(missing_ok=True)
+    result.portfolio.metadata["ifc_file"] = file.filename
+    _store.load_import(result)
+    return {"success": True, **result.summary()}
 
 
 if __name__ == "__main__":

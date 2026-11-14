@@ -20,13 +20,18 @@ scikit-learn>=1.7.2
 # API backend
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
 
 # Semantic web and building ontology
 brickschema>=0.6.0
 rdflib>=7.0.0
 
+# IFC import / IEQ write-back (optional)
+# ifcopenshell>=0.8.0
+
 # Development dependencies (optional, uncomment to install)
 # pytest>=7.4.0
+# httpx>=0.27.0
 # pytest-cov>=4.1.0
 # pytest-mock>=3.11.0
 # black>=23.7.0

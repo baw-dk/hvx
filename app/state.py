@@ -4,7 +4,6 @@ import uuid
 from typing import Dict, List, Optional
 
 import pandas as pd
-import streamlit as st
 
 from core import (
     Portfolio,
@@ -188,6 +187,13 @@ class PortfolioStore:
             col: dataset[col].tolist() for col in dataset.columns
         }
 
+    def load_import(self, result) -> None:
+        """Replace the store content with an IFC/Brick import result."""
+        self.portfolio = result.portfolio
+        self.buildings = dict(result.buildings)
+        self.floors = dict(result.floors)
+        self.rooms = dict(result.rooms)
+
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
@@ -254,6 +260,8 @@ class PortfolioStore:
 
 
 def get_portfolio_store() -> PortfolioStore:
+    import streamlit as st  # only the Streamlit UI needs it; the API must not
+
     if "portfolio_store" not in st.session_state:
         st.session_state["portfolio_store"] = PortfolioStore()
     return st.session_state["portfolio_store"]
