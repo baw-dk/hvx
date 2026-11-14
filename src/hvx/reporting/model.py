@@ -39,6 +39,7 @@ class SeasonResult:
     samples: int = 0
     period_start: Optional[str] = None
     period_end: Optional[str] = None
+    adaptive: bool = False  # EN 16798-1 adaptive temperature limits used (free-running building)
     tail_rating: Optional[str] = None
     tail: Dict[str, Any] = field(default_factory=dict)  # {"domains": {...}, "parameters": {...}} labels I–IV
     br18_pass: Optional[bool] = None

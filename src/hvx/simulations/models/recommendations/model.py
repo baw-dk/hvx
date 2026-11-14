@@ -102,6 +102,7 @@ class RoomEvidence:
     solar_hours_avoided: Optional[float] = None
     solar_k_per_100: Optional[float] = None
     has_outdoor_temperature: bool = False
+    adaptive: bool = False  # cool_share_above measured against the adaptive upper limit
     extra: Dict[str, float] = field(default_factory=dict)
 
     @classmethod
@@ -113,9 +114,12 @@ class RoomEvidence:
         co2_limit: float,
         heat_band: tuple,
         cool_band: tuple,
+        cool_upper: Optional[pd.Series] = None,
     ) -> "RoomEvidence":
         """``df``: occupied samples; ``hours``: duration of each sample; ``heating``: True in the
-        heating season (all aligned on ``df.index``)."""
+        heating season (all aligned on ``df.index``). ``cool_upper``: per-sample upper limit
+        outside the heating season (adaptive model for free-running buildings); default the
+        fixed ``cool_band``."""
         ev = cls(co2_limit=co2_limit, heat_band=tuple(heat_band), cool_band=tuple(cool_band))
         heating = heating.reindex(df.index).fillna(False).astype(bool)
         hours = hours.reindex(df.index).fillna(0.0)
@@ -140,7 +144,10 @@ class RoomEvidence:
                 ev.heat_share_below = share(t < heat_band[0], h_valid)
                 ev.heat_mean = round(float(t[h_valid].mean()), 1)
             if c_valid.any():
-                ev.cool_share_above = share(t > cool_band[1], c_valid)
+                upper = cool_upper.reindex(df.index) if cool_upper is not None else None
+                limit = upper.fillna(cool_band[1]) if upper is not None else cool_band[1]
+                ev.cool_share_above = share(t > limit, c_valid)
+                ev.adaptive = cool_upper is not None
             if valid.any():
                 ev.hours_above_26 = round(float(hours[valid & (t > 26.0)].sum()), 0)
                 ev.hours_above_27 = round(float(hours[valid & (t > 27.0)].sum()), 0)
@@ -182,7 +189,7 @@ RECOMMENDATION_TEXTS: Dict[str, Dict[str, Dict[str, str]]] = {
         "solar_shading": {
             "action": "Reduce solar heat gains",
             "title": "Reduce solar heat gains in {room}",
-            "description": "Outside the heating season the room is above {upper} °C for {pct} of the occupied time and "
+            "description": "Outside the heating season the room is above {upper} for {pct} of the occupied time and "
             "above 26 °C for {hours} h. Its temperature rises by about {k} °C per 100 W/m² of solar irradiance at equal "
             "outdoor temperature. External shading (blinds, screens, awnings) acts before the heat enters.",
             "summary": "Overheating outside the heating season with a measurable solar contribution. External shading "
@@ -193,7 +200,7 @@ RECOMMENDATION_TEXTS: Dict[str, Dict[str, Dict[str, str]]] = {
         "summer_overheating": {
             "action": "Reduce overheating outside the heating season",
             "title": "Reduce overheating in {room}",
-            "description": "Outside the heating season the room is above {upper} °C for {pct} of the occupied time and "
+            "description": "Outside the heating season the room is above {upper} for {pct} of the occupied time and "
             "above 26 °C for {hours} h (BR18 guidance value: 100 h). Check night and early-morning ventilation, "
             "internal heat sources and solar shading{solar_note}.",
             "summary": "Too warm outside the heating season. Check night and early-morning ventilation, internal heat "
@@ -258,7 +265,7 @@ RECOMMENDATION_TEXTS: Dict[str, Dict[str, Dict[str, str]]] = {
         "solar_shading": {
             "action": "Begræns solvarmen",
             "title": "Begræns solvarmen i {room}",
-            "description": "Uden for fyringssæsonen er lokalet over {upper} °C i {pct} af brugstiden og over 26 °C i "
+            "description": "Uden for fyringssæsonen er lokalet over {upper} i {pct} af brugstiden og over 26 °C i "
             "{hours} timer. Temperaturen stiger ca. {k} °C pr. 100 W/m² solindstråling ved samme udetemperatur. "
             "Udvendig solafskærmning (persienner, screens, markiser) stopper varmen, før den kommer ind.",
             "summary": "Overtemperatur uden for fyringssæsonen med et målbart bidrag fra solen. Udvendig solafskærmning "
@@ -269,7 +276,7 @@ RECOMMENDATION_TEXTS: Dict[str, Dict[str, Dict[str, str]]] = {
         "summer_overheating": {
             "action": "Begræns overtemperatur uden for fyringssæsonen",
             "title": "Begræns overtemperatur i {room}",
-            "description": "Uden for fyringssæsonen er lokalet over {upper} °C i {pct} af brugstiden og over 26 °C i "
+            "description": "Uden for fyringssæsonen er lokalet over {upper} i {pct} af brugstiden og over 26 °C i "
             "{hours} timer (vejledende værdi i BR18: 100 timer). Kontroller natte- og morgenventilation, interne "
             "varmekilder og solafskærmning{solar_note}.",
             "summary": "For varmt uden for fyringssæsonen. Kontroller natte- og morgenventilation, interne varmekilder "
@@ -318,6 +325,7 @@ RECOMMENDATION_TEXTS: Dict[str, Dict[str, Dict[str, str]]] = {
         },
     },
 }
+ADAPTIVE_UPPER = {"en": "the adaptive comfort limit", "da": "den adaptive komfortgrænse"}
 SOLAR_NOTE = {
     "en": " (the solar effect cannot be separated without outdoor temperature data)",
     "da": " (solens bidrag kan ikke adskilles uden målinger af udetemperaturen)",
@@ -386,7 +394,8 @@ class SmartRecommendationsModel:
         too_many_hours = (ev.hours_above_26 or 0.0) > 100.0
         if warm >= TRIGGER or too_many_hours:
             priority = "high" if too_many_hours else _priority(warm)
-            values = {"upper": n(ev.cool_band[1]), "pct": pct(ev.cool_share_above), "hours": n(ev.hours_above_26),
+            upper_text = ADAPTIVE_UPPER[lang] if ev.adaptive else f"{n(ev.cool_band[1])} °C"
+            values = {"upper": upper_text, "pct": pct(ev.cool_share_above), "hours": n(ev.hours_above_26),
                       "k": n(ev.solar_k_per_100, 1), "avoided": n(ev.solar_hours_avoided),
                       "solar_note": "" if ev.has_outdoor_temperature else SOLAR_NOTE[lang]}
             evidence = {"cool_share_above_pct": ev.cool_share_above, "hours_above_26": ev.hours_above_26,

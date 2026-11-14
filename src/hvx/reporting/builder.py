@@ -108,9 +108,12 @@ class ReportBuilder:
         climate: Dict[str, dict] = {}
         holiday_periods: list = []
         timezone = None
+        cooling = None
         for source in (portfolio, building):
             meta = getattr(source, "metadata", None) or {}
             timezone = meta.get("timezone") or timezone
+            if meta.get("mechanical_cooling") is not None:
+                cooling = bool(meta["mechanical_cooling"])
             for key in ("climate_data", "climate_timeseries"):
                 if isinstance(meta.get(key), dict):
                     climate.update(meta[key])
@@ -127,6 +130,7 @@ class ReportBuilder:
             climate=climate,
             holiday_periods=holiday_periods,
             timezone=timezone,
+            mechanical_cooling=cooling,
         )
 
     def _run(self, tasks: List[RoomTask]) -> List[RoomReport]:

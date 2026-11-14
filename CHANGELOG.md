@@ -8,7 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.4.0] - 2026-11-14
 
+### Added
+- `hvx.connectors.dmi` and `hvx dmi stations|fetch`: DMI open-data climate data (quality-controlled
+  hourly station values, no API key) in the file format buildings use as `climate_file`.
+- EN 16798-1 adaptive model for buildings without mechanical cooling
+  (`ReportConfig(mechanical_cooling=False)` or building metadata `mechanical_cooling: false`):
+  outside the heating season temperature limits follow the running mean of daily outdoor
+  temperature (computed from all hours, not the assessed slice). Seasons show "(adaptive)".
+
 ### Fixed
+- Adaptive limits used a symmetric ±2/3/4 K band without pythermalcomfort; now EN 16798-1's
+  −3/−4/−5 and +2/+3/+4 K around 0.33·θrm + 18.8 °C with its validity ranges, vectorised.
 Found by an audit against EN 16798-1, BR18, the TAIL reference implementation and the
 tracer-gas decay literature, with synthetic data of known answer and real school data.
 

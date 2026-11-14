@@ -47,6 +47,7 @@ class RoomTask:
     climate: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     holiday_periods: List[Any] = field(default_factory=list)  # from building/portfolio metadata
     timezone: Optional[str] = None  # IANA zone for timestamps with a UTC offset (building metadata "timezone")
+    mechanical_cooling: Optional[bool] = None  # building metadata "mechanical_cooling"
 
 
 def _round(value: Optional[float], digits: int = 1) -> Optional[float]:
@@ -114,7 +115,14 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
     from .frames import COUNTRY_TIMEZONES
 
     tz = task.timezone or COUNTRY_TIMEZONES.get(str(country).upper())
-    df, warnings = room_frame(room.timeseries_data, room.timestamps, climate_frame(task.climate, tz), tz)
+    climate = climate_frame(task.climate, tz)
+    df, warnings = room_frame(room.timeseries_data, room.timestamps, climate, tz)
+    # Daily mean outdoor temperature over all hours, for the adaptive model's running mean.
+    outdoor_daily: Dict[str, float] = {}
+    if climate is not None and "outdoor_temperature" in climate.columns:
+        daily = climate["outdoor_temperature"].dropna().resample("D").mean().dropna()
+        outdoor_daily = {d.strftime("%Y-%m-%d"): round(float(v), 2) for d, v in daily.items()}
+    cooling = config.mechanical_cooling if config.mechanical_cooling is not None else task.mechanical_cooling
     report.warnings.extend(warnings)
     if df is None or df.empty:
         report.status = "no_data"
@@ -163,7 +171,11 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
                 "timeseries_data": series,
                 "timestamps": stamps,
                 "computed_metrics": {},
-                "metadata": dict(room.metadata or {}),
+                "metadata": {
+                    **(room.metadata or {}),
+                    **({"mechanical_cooling": cooling} if cooling is not None else {}),
+                    **({"outdoor_daily_mean_temperature": outdoor_daily} if outdoor_daily else {}),
+                },
                 "building_type": room.building_type or building_type,
             }
         )
@@ -199,6 +211,7 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
             season_result.achieved_category = assessment.achieved_category.value if assessment.achieved_category else None
             season_result.compliance_pct = _round(assessment.compliance_pct)
             season_result.time_in_category_pct = {k: round(v, 1) for k, v in assessment.time_in_category_pct.items()}
+            season_result.adaptive = bool(en.get("adaptive_model_used"))
         else:
             reason = results.get("en16798_1_error") or (
                 f"EN 16798-1 not applicable (building type '{building_type}', country '{country}')"
@@ -229,7 +242,8 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
 
     # --- simulations on the full period -------------------------------------
     if config.include_simulations:
-        _simulate(report, full, df, room, config, unoccupied, country)
+        daily = pd.Series({pd.Timestamp(k): v for k, v in outdoor_daily.items()}, dtype=float).sort_index() if outdoor_daily else None
+        _simulate(report, full, df, room, config, unoccupied, country, daily)
 
     report.issues = _issues(report, config)
 
@@ -296,7 +310,8 @@ def _combine(report: RoomReport, assessments: List[IEQAssessment], config: Repor
 
 
 def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Room, config: ReportConfig,
-              unoccupied: Optional[pd.Series] = None, country: Optional[str] = None) -> None:
+              unoccupied: Optional[pd.Series] = None, country: Optional[str] = None,
+              climate_daily: Optional[pd.Series] = None) -> None:
     """``full``: all hours (CO₂ decay happens when rooms empty). ``df``: assessed (occupied) hours,
     used for overheating, correlations and scenarios so they match the standards' numbers."""
     from hvx.simulations.models.correlations import ClimateCorrelationModel
@@ -357,7 +372,13 @@ def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Ro
         report.warnings.append(f"Scenario estimate failed: {exc}")
     try:
         hours = _sample_hours(full).reindex(df.index).fillna(0.0)  # durations from the full timeline
-        evidence = RoomEvidence.from_frame(df, hours, heating, limits.co2_ppm, heat_band, cool_band)
+        cool_upper = None
+        if any(s.adaptive for s in report.seasons) and climate_daily is not None and len(climate_daily):
+            running = EN16798Calculator.calculate_running_mean_timeseries(climate_daily.resample("h").ffill())
+            rm = running.reindex(df.index, method="ffill")
+            cool_upper = pd.Series(EN16798Calculator.adaptive_limits(category, rm.to_numpy())[1], index=df.index)
+            cool_upper[rm.isna() | (rm > 30.0)] = np.nan  # fixed range there
+        evidence = RoomEvidence.from_frame(df, hours, heating, limits.co2_ppm, heat_band, cool_band, cool_upper)
         if scenarios is not None:
             if scenarios.ventilation is not None:
                 evidence.airflow_factor = scenarios.ventilation.metrics.get("airflow_factor")
