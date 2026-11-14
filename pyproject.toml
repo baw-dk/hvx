@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.3.0"
 description = "Indoor environmental quality (IEQ) analytics for buildings: EN 16798-1, TAIL, BR18, live monitoring and IFC/Brick interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Proprietary License"}
+license = "MPL-2.0"
+license-files = ["LICENSE"]
 authors = [
     {name = "HVX", email = "bruno.adam@pm.me"}
 ]
@@ -60,7 +61,9 @@ hvx = "hvx.cli:cli"
 
 [project.urls]
 Homepage = "https://brunoadam.eu/"
-Repository = "https://github.com/bruadam/hvx"
+Repository = "https://github.com/Koto-Labs/hvx"
+Issues = "https://github.com/Koto-Labs/hvx/issues"
+Changelog = "https://github.com/Koto-Labs/hvx/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

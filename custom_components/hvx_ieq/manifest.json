@@ -1,13 +1,19 @@
 {
   "domain": "hvx_ieq",
   "name": "HVX Indoor Environment",
-  "codeowners": ["@bruadam"],
+  "codeowners": [
+    "@bruadam"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
-  "documentation": "https://github.com/bruadam/hvx",
+  "dependencies": [
+    "recorder"
+  ],
+  "documentation": "https://github.com/Koto-Labs/hvx",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/bruadam/hvx/issues",
-  "requirements": ["hvx==0.3.0"],
+  "issue_tracker": "https://github.com/Koto-Labs/hvx/issues",
+  "requirements": [
+    "hvx==0.3.0"
+  ],
   "version": "0.3.0"
 }

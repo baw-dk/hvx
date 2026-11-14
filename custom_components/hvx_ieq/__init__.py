@@ -1,3 +1,6 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """HVX Indoor Environment: EN 16798-1 IEQ monitoring for Home Assistant areas."""
 
 from __future__ import annotations

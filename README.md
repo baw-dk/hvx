@@ -1,5 +1,7 @@
 # HVX — indoor environmental quality analytics
 
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
+
 Assess indoor climate (temperature, CO₂, humidity) in rooms, buildings and
 portfolios against **EN 16798-1**, **TAIL** and **BR18**, from CSV files or
 **live data** (Home Assistant, push APIs), and report on it as HTML, JSON or CSV.
@@ -312,3 +314,22 @@ The helper returns all models that can run directly on the entity or via child r
 - EN 16798-1: Energy performance of buildings - Indoor environmental input parameters
 - TAIL Rating Scheme: ALDREN project
 - pythermalcomfort: https://github.com/CenterForTheBuiltEnvironment/pythermalcomfort
+
+## 🤝 Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Contributors sign
+the [Contributor License Agreement](CLA.md) once, by commenting on their first pull
+request ([why](docs/contributing/cla.md)), and follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Security issues: [SECURITY.md](SECURITY.md).
+
+## 📄 License
+
+[MPL-2.0](LICENSE): use, modify and redistribute, including in proprietary
+products. Files you modify must stay under MPL-2.0 and their source must be made
+available; your own separate files can use any license. Source files carry the
+notice described in [LICENSE_HEADER.md](LICENSE_HEADER.md).
+
+Under the [CLA](CLA.md), the maintainer can also offer HVX under other terms (for
+example a commercial license) while every contribution stays available under
+MPL-2.0.
+
