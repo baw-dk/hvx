@@ -276,19 +276,28 @@ def test_room_takes_its_worst_season():
     assert report.achieved_category == "IV" and report.meets_target is False and not report.below_category_iv
 
 
-def test_ventilation_recommendation_follows_measured_co2():
-    from hvx.simulations.models.recommendations import SmartRecommendationsModel
-    from hvx.simulations.models.recommendations.model import RecommendationType
-    from hvx.simulations.models.scenario import ScenarioImpactSummary
-    from hvx.simulations.models.ventilation import VentilationRateResult
+def test_recommendations_follow_measured_evidence():
+    from hvx.simulations.models.recommendations import RoomEvidence, SmartRecommendationsModel
 
-    low_ach = VentilationRateResult(0.3, None, 0.9, 900, 420, 420, (0.2, 0.4), 0.9, "poor", "after-hours decay")
-    scen = ScenarioImpactSummary(None, None, None, None)
     model = SmartRecommendationsModel()
-    kinds = lambda co2: {r.type for r in model._ventilation_recommendation("R", co2, low_ach, scen) and [model._ventilation_recommendation("R", co2, low_ach, scen)] or []}  # noqa: E731
-    assert kinds(98.0) == set()  # good CO2 during use: low after-hours ACH alone is not a problem
-    assert kinds(60.0) == {RecommendationType.VENTILATION}
-    assert kinds(None) == {RecommendationType.VENTILATION}  # no CO2 assessment: fall back to ACH
+    keys = lambda ev: [r.key for r in model.generate("R", ev)]  # noqa: E731
+    assert keys(RoomEvidence(co2_share_above_1000=2.0, heat_share_above=1.0, heat_share_below=0.0,
+                             cool_share_above=0.0, hours_above_26=10)) == []  # good room: nothing
+    rec = model.generate("R", RoomEvidence(co2_share_above_1000=40.0, co2_hours_above_1000=500, co2_p95=1800,
+                                           airflow_factor=1.8))[0]
+    assert rec.key == "ventilation" and rec.priority == "high" and "×1.8" in rec.expected_benefit
+    assert rec.metric == 1.8 and rec.metric_kind == "airflow_factor"
+    # 0 % compliance must not read as "fine" (old `or 100.0` bug): priority follows the share
+    assert model.generate("R", RoomEvidence(co2_share_above_1000=100.0))[0].priority == "high"
+    # too cold and too warm in winter: one control recommendation, not two contradicting ones
+    assert keys(RoomEvidence(heat_share_above=12.0, heat_share_below=30.0)) == ["temperature_control"]
+    assert keys(RoomEvidence(heat_share_below=30.0)) == ["too_cold"]
+    # overheating: solar shading only with a measured solar effect, otherwise the general advice
+    assert keys(RoomEvidence(cool_share_above=30.0, hours_above_26=150)) == ["summer_overheating"]
+    assert keys(RoomEvidence(cool_share_above=30.0, hours_above_26=150, solar_hours_avoided=60,
+                             solar_k_per_100=0.8)) == ["solar_shading"]
+    # humidity is low-priority information
+    assert [(r.key, r.priority) for r in model.generate("R", RoomEvidence(rh_share_below_25=40.0))] == [("dry_air", "low")]
 
 
 def test_danish_report(portfolio):

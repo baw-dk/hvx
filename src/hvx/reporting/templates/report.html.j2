@@ -219,7 +219,7 @@
 <h2>{{ _("Priority actions") }}</h2>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>{{ _("Priority") }}</th><th>{{ _("Action") }}</th><th class="num">{{ _("Rooms") }}</th><th>{{ _("Where") }}</th><th>{{ _("Expected benefit (worst case)") }}</th></tr></thead>
+  <thead><tr><th>{{ _("Priority") }}</th><th>{{ _("Action") }}</th><th class="num">{{ _("Rooms") }}</th><th>{{ _("Where") }}</th><th>{{ _("Expected effect (range over the rooms)") }}</th></tr></thead>
   <tbody>
   {% for a in report.actions %}
     <tr>
@@ -358,7 +358,7 @@
     {% for name, st in r.period_breakdown.items() %}{{ _("{period}: CO₂ mean {mean}, > 1000 ppm {pct} of the time", period=(_(name) | capitalize) ~ period_span(name), mean=(st.get("co2_mean") | num(0, "ppm")), pct=(st.get("co2>1000_pct") | pct(0))) }}{% if not loop.last %} · {% endif %}{% endfor %}
   </p>
   {% endif %}
-  {% if r.ventilation %}<p class="small"><strong>{{ _("Air change from CO₂ decay") }}:</strong> {{ r.ventilation.ach | num(2) }} {{ "luftskifter/time" if lang == "da" else "ACH" }} (R² {{ r.ventilation.r_squared | num(2) }}). <span class="muted">{{ _("Decays mostly occur after hours, when mechanical ventilation may be off.") }}</span></p>{% endif %}
+  {% if r.ventilation %}<p class="small"><strong>{{ _("After-hours air change (CO₂ decay)") }}:</strong> {{ r.ventilation.ach | num(2) }} {{ _("per hour") }} ({{ _("median of {n} decays, interquartile range {lo}–{hi}; background {bg} ppm", n=r.ventilation.decays, lo=(r.ventilation.ach_iqr[0] | num(2)), hi=(r.ventilation.ach_iqr[1] | num(2)), bg=(r.ventilation.background_co2 | num(0))) }}). <span class="muted">{{ _("Measured while the room is empty, when ventilation may be reduced or off: it does not show the ventilation during use.") }}{% if r.ventilation.resolvable_max_ach %} {{ _("At this sampling interval rates above about {x} per hour cannot be resolved.", x=(r.ventilation.resolvable_max_ach | num(1))) }}{% endif %}</span></p>{% endif %}
   {% if r.recommendations %}
   <details>
     <summary>{{ _("{n} recommendation(s)", n=(r.recommendations | length)) }}</summary>
@@ -440,6 +440,7 @@
     <li>{{ _("<strong>IEQ score.</strong> Weighted mean of parameter compliance ({weights}; weights renormalised over available parameters).", weights=score_weights) | safe }}</li>
     <li>{{ _("<strong>Building and portfolio category.</strong> An hvx summary, not part of EN 16798-1: the best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.", pct=((cfg.group_category_threshold * 100) | pct(0))) | safe }}</li>
     {% if report.rooms | selectattr("br18_pass", "ne", none) | list %}<li>{{ _("<strong>BR18.</strong> Checked once over all assessed hours of the period. The 100 h above 26 °C and 25 h above 27 °C are the BR18 guidance values on thermal indoor climate, which normally satisfy the requirement for offices and are documented by calculation; for schools the building owner sets the hours. § 447 (1000 ppm CO₂ in teaching rooms) is a design requirement. Applied to measured data, both are indicators, not a compliance verdict.") | safe }}</li>{% endif %}
+    {% if cfg.include_simulations %}<li>{{ _("<strong>Recommendations.</strong> Rule-based on measured occupied time: CO₂ above 1000 ppm, temperatures outside the target category's range per season, hours above 26 °C, humidity below 25 % or above 60 %. A rule fires above 5 % of the occupied time; priorities (high from 25 %, medium from 10 %) are hvx's own judgement. Expected effects are estimates with stated assumptions: the outdoor-air factor assumes steady state; hours above 26 °C avoided by shading come from a regression on solar irradiance and outdoor temperature and assume shading removes 70 % of the measured solar effect.") | safe }}</li>{% endif %}
     {% for note in cfg.notes %}<li>{{ note }}</li>{% endfor %}
     <li>{{ _("<strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.") | safe }}</li>
   </ul>

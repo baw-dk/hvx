@@ -126,9 +126,12 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
 
     # Standards apply "during use": assess occupied samples only.
     full = df
-    if config.occupied_only and isinstance(df.index, pd.DatetimeIndex):
+    unoccupied = None
+    if isinstance(df.index, pd.DatetimeIndex):
         schedule = config.schedule_for(building_type, task.holiday_periods)
-        occupied = schedule.mask(df.index, country).to_numpy()
+        unoccupied = pd.Series(~schedule.mask(df.index, country).to_numpy(), index=df.index)
+    if config.occupied_only and isinstance(df.index, pd.DatetimeIndex):
+        occupied = (~unoccupied).to_numpy()
         df = df[occupied]
         durations = durations[occupied]
         report.occupancy = describe_schedule(schedule, t)
@@ -214,7 +217,7 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
 
     # --- simulations on the full period -------------------------------------
     if config.include_simulations:
-        _simulate(report, full, df, room, config)
+        _simulate(report, full, df, room, config, unoccupied, country)
 
     report.issues = _issues(report, config)
 
@@ -280,7 +283,8 @@ def _combine(report: RoomReport, assessments: List[IEQAssessment], config: Repor
     report.tail = combine_tail([s.tail for s in report.seasons if s.tail])
 
 
-def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Room, config: ReportConfig) -> None:
+def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Room, config: ReportConfig,
+              unoccupied: Optional[pd.Series] = None, country: Optional[str] = None) -> None:
     """``full``: all hours (CO₂ decay happens when rooms empty). ``df``: assessed (occupied) hours,
     used for overheating, correlations and scenarios so they match the standards' numbers."""
     from hvx.simulations.models.correlations import ClimateCorrelationModel
@@ -291,16 +295,21 @@ def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Ro
     ventilation = correlations = scenarios = None
     try:
         if "co2" in full.columns:
-            ventilation = VentilationCalculator().estimate_from_co2_decay(full["co2"].dropna(), volume_m3=room.volume_m3)
+            # Decays in unoccupied time only (no CO₂ source during the decay). They describe the
+            # empty room, when mechanical ventilation may be reduced or off, not use.
+            ventilation = VentilationCalculator().estimate_from_co2_decay(
+                full["co2"].dropna(), volume_m3=room.volume_m3, unoccupied=unoccupied
+            )
             if ventilation is not None:
                 report.ventilation = {
-                    # Decays mostly happen after hours, when mechanical ventilation may be off:
-                    # this characterises the room then, not necessarily during lessons.
-                    "basis": "CO₂ decay periods at any time of day",
+                    "basis": "after_hours_co2_decay",
                     "ach": _round(ventilation.ach, 2),
-                    "category": ventilation.category,
+                    "ach_iqr": list(ventilation.confidence_interval),
+                    "decays": ventilation.decays,
+                    "background_co2": _round(ventilation.outdoor_co2, 0),
                     "r_squared": _round(ventilation.r_squared, 3),
                     "ventilation_l_s": _round(ventilation.ventilation_l_s, 1),
+                    "resolvable_max_ach": ventilation.resolvable_max_ach,
                     "description": ventilation.description,
                 }
     except Exception as exc:
@@ -316,17 +325,38 @@ def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Ro
         }
     except Exception as exc:
         report.warnings.append(f"Climate correlation failed: {exc}")
+    # Target-category limits per season (EN 16798-1), and which samples fall in the heating season.
+    from hvx.simulations.models.recommendations import RoomEvidence
+    from hvx.standards.en16798.analysis import EN16798Calculator, EN16798Category
+
+    category = EN16798Category(config.target_category)
+    limits = EN16798Calculator.get_thresholds(category, "heating")
+    heat_band = (limits.temperature_heating["lower"], limits.temperature_heating["upper"])
+    cool_band = (limits.temperature_cooling["lower"], limits.temperature_cooling["upper"])
+    heating = pd.Series(False, index=df.index)
+    if isinstance(df.index, pd.DatetimeIndex):
+        heating = pd.Series(df.index.isin(season_slice(df, "winter", country).index), index=df.index)
     try:
-        scenarios = ScenarioImpactModel(temp_band=config.temperature_band, co2_threshold=config.co2_threshold).estimate_impacts(df, ventilation)
+        scenarios = ScenarioImpactModel(co2_limit=limits.co2_ppm, temp_band=heat_band).estimate_impacts(
+            df, ventilation, heating=heating
+        )
         report.scenarios = [s for s in (scenarios.as_dict().get(k) for k in ("ventilation", "solar_shading")) if s]
     except Exception as exc:
         report.warnings.append(f"Scenario estimate failed: {exc}")
-    if correlations is not None and scenarios is not None:
-        try:
-            recs = SmartRecommendationsModel(config.language).generate(room.name, dict(report.compliance), correlations, ventilation, scenarios)
-            report.recommendations = [r.as_dict() for r in recs]
-        except Exception as exc:
-            report.warnings.append(f"Recommendations failed: {exc}")
+    try:
+        evidence = RoomEvidence.from_frame(df, _sample_hours(df), heating, limits.co2_ppm, heat_band, cool_band)
+        if scenarios is not None:
+            if scenarios.ventilation is not None:
+                evidence.airflow_factor = scenarios.ventilation.metrics.get("airflow_factor")
+            if scenarios.solar_shading is not None:
+                metrics = scenarios.solar_shading.metrics
+                if (metrics.get("t_statistic") or 0) >= 3 and (metrics.get("solar_k_per_100_w_m2") or 0) > 0:
+                    evidence.solar_k_per_100 = metrics.get("solar_k_per_100_w_m2")
+                    evidence.solar_hours_avoided = metrics.get("hours_avoided")
+        recs = SmartRecommendationsModel(config.language).generate(room.name, evidence)
+        report.recommendations = [r.as_dict() for r in recs]
+    except Exception as exc:
+        report.warnings.append(f"Recommendations failed: {exc}")
 
 
 def _br18(report: RoomReport, df: pd.DataFrame, room: Room, country: str, building_type: str) -> None:

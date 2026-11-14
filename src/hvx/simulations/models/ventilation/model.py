@@ -2,258 +2,176 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """
-Ventilation rate estimation from CO2 decay analysis.
+Air change rate from CO2 decay (tracer-gas decay method, cf. ASTM E741 / D6245).
 
-Estimates air change rate (ACH) by analyzing exponential CO2 decay
-when room becomes unoccupied.
+After people leave, CO2 falls towards the background level:
+``C(t) - C_bg = (C_0 - C_bg) * exp(-ACH * t)``. hvx fits
+``ln(C - C_bg) = a - ACH * t`` with a free intercept on the points that follow the
+peak, so the fit does not depend on when within a sampling step people left.
 
-Based on: CO2(t) = CO2_outdoor + (CO2_initial - CO2_outdoor) * exp(-ACH * t)
+What the number means: decays happen when the room is empty, mostly after hours,
+when mechanical ventilation may run at a reduced level or be off. The result
+characterises the room *then* (infiltration / reduced ventilation), not the
+ventilation during use. hvx therefore reports it as an "after-hours air change"
+with the median and spread of the individual decays, and gives no quality rating.
+
+Guards:
+- Only decays in unoccupied time (``unoccupied`` mask), so nobody adds CO2.
+- Background CO2 is estimated per room (5th percentile of the readings, at least
+  380 ppm) instead of assuming 400 ppm.
+- Decays that are too fast for the sampling interval (less than ~3 points above
+  the background) are skipped; on hourly data rates above ~1 h-1 cannot be
+  resolved and are reported as such.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from scipy.optimize import curve_fit
 
 
 @dataclass
 class VentilationRateResult:
-    """Result of ventilation rate analysis."""
-    ach: float  # Air changes per hour
-    ventilation_l_s: Optional[float]  # Ventilation rate in L/s
-    r_squared: float  # Goodness of fit
-    initial_co2: float  # CO2 when decay started (ppm)
-    final_co2: float  # CO2 at end of decay (ppm)
-    outdoor_co2: float  # Estimated outdoor CO2 (ppm)
-    confidence_interval: Tuple[float, float]  # 95% CI for ACH
-    quality_score: float  # 0-1, based on R² and data quality
-    category: str  # "poor", "fair", "good", "excellent"
+    """After-hours air change rate from CO2 decays."""
+    ach: float  # median air changes per hour over the accepted decays
+    ventilation_l_s: Optional[float]  # ach x volume / 3.6, if the volume is known
+    r_squared: float  # median R² of the log-linear fits
+    initial_co2: float  # median CO2 at the start of the decays (ppm)
+    final_co2: float  # background used (ppm)
+    outdoor_co2: float  # background CO2 estimated for this room (ppm)
+    confidence_interval: Tuple[float, float]  # interquartile range of the decays' ACH
+    quality_score: float  # share of candidate decays that were usable (0-1)
+    category: str  # what the value describes, e.g. "after_hours"
     description: str
+    decays: int = 0  # number of accepted decays
+    too_fast: int = 0  # decays too fast to resolve at this sampling interval
+    step_hours: Optional[float] = None
+    resolvable_max_ach: Optional[float] = None  # fastest rate this sampling interval can resolve
+    per_decay: List[float] = field(default_factory=list)
 
 
 class VentilationCalculator:
-    """
-    Estimate ventilation rate from CO2 decay.
+    """Estimate the after-hours air change rate of a room from CO2 decays."""
 
-    Analyzes periods when room becomes unoccupied and CO2 decays
-    back to outdoor levels to estimate air change rate.
-    """
+    MIN_POINTS = 3  # points above background after the peak
+    MIN_EXCESS_PPM = 50.0  # below this the excess is within sensor noise
+    MIN_R2 = 0.9  # log-linear fit quality
 
-    # Ventilation quality categories (based on ACH)
-    ACH_CATEGORIES = {
-        "excellent": 6.0,
-        "good": 4.0,
-        "fair": 2.0,
-        "poor": 0.0,
-    }
-
-    def __init__(self, outdoor_co2: float = 400.0):
-        """
-        Initialize calculator.
-
-        Args:
-            outdoor_co2: Outdoor CO2 concentration (ppm), default 400
-        """
+    def __init__(self, outdoor_co2: Optional[float] = None):
+        """``outdoor_co2``: fixed background (ppm); None estimates it from the data."""
         self.outdoor_co2 = outdoor_co2
+
+    @staticmethod
+    def estimate_background(co2: pd.Series) -> float:
+        values = co2.dropna()
+        if values.empty:
+            return 420.0
+        return float(max(380.0, np.percentile(values, 5)))
 
     def estimate_from_co2_decay(
         self,
         co2_series: pd.Series,
         volume_m3: Optional[float] = None,
-        min_decay_threshold: float = 100.0
+        min_decay_threshold: float = 100.0,
+        unoccupied: Optional[pd.Series] = None,
     ) -> Optional[VentilationRateResult]:
         """
-        Estimate ventilation rate from CO2 decay.
-
-        Args:
-            co2_series: Time series of CO2 measurements
-            volume_m3: Room volume for L/s calculation
-            min_decay_threshold: Minimum CO2 drop to consider (ppm)
-
-        Returns:
-            VentilationRateResult if decay found, None otherwise
+        ``unoccupied``: boolean Series on the same index, True when nobody is expected
+        (e.g. outside the occupancy schedule). Without it every decay is used.
         """
-        # Identify decay periods
-        decay_segments = self._identify_decay_periods(co2_series, min_decay_threshold)
-
-        if not decay_segments:
+        co2 = co2_series.dropna().sort_index()
+        if len(co2) < self.MIN_POINTS + 2 or not isinstance(co2.index, pd.DatetimeIndex):
             return None
+        background = self.outdoor_co2 if self.outdoor_co2 is not None else self.estimate_background(co2)
+        steps = co2.index.to_series().diff().dt.total_seconds().dropna() / 3600.0
+        step = float(steps[steps > 0].median()) if (steps > 0).any() else 1.0
+        if unoccupied is not None:
+            unoccupied = unoccupied.reindex(co2.index).fillna(False).astype(bool)
 
-        # Analyze all segments and average
-        results = []
-        for segment in decay_segments:
-            result = self._analyze_decay_segment(segment, volume_m3)
-            if result and result.r_squared > 0.7:  # Only good fits
-                results.append(result)
+        fits: List[Tuple[float, float, float]] = []  # (ach, r2, start ppm)
+        candidates = too_fast = 0
+        for segment in self._identify_decay_periods(co2, min_decay_threshold, step):
+            # Drop the peak: people may have left at any time within the step after it.
+            points = segment.iloc[1:]
+            if unoccupied is not None and not bool(unoccupied.reindex(points.index).fillna(False).all()):
+                continue
+            candidates += 1
+            excess = points - background
+            usable = points[excess > self.MIN_EXCESS_PPM]
+            if len(usable) < self.MIN_POINTS:
+                too_fast += 1
+                continue
+            t = (usable.index - usable.index[0]).total_seconds().to_numpy() / 3600.0
+            y = np.log(usable.to_numpy(dtype=float) - background)
+            slope, intercept = np.polyfit(t, y, 1)
+            predicted = intercept + slope * t
+            ss_tot = float(np.sum((y - y.mean()) ** 2))
+            r2 = 1.0 - float(np.sum((y - predicted) ** 2)) / ss_tot if ss_tot > 0 else 0.0
+            ach = -float(slope)
+            if ach <= 0 or r2 < self.MIN_R2:
+                continue
+            fits.append((ach, r2, float(segment.iloc[0])))
 
-        if not results:
+        if not fits:
             return None
-
-        # Weight by R²
-        total_weight = sum(r.r_squared for r in results)
-        if total_weight == 0:
-            return None
-
-        weighted_ach = sum(r.ach * r.r_squared for r in results) / total_weight
-        avg_r_squared = sum(r.r_squared for r in results) / len(results)
-
-        # Calculate pooled confidence interval
-        ach_values = [r.ach for r in results]
-        ci_lower = float(np.percentile(ach_values, 2.5))
-        ci_upper = float(np.percentile(ach_values, 97.5))
-
-        # Ventilation in L/s
-        ventilation_l_s = None
-        if volume_m3:
-            ventilation_l_s = (weighted_ach * volume_m3 * 1000) / 3600
-
-        category = self._categorize_ach(weighted_ach)
-        quality_score = avg_r_squared
-
+        # Fastest decay this sampling interval can show: MIN_POINTS points still above
+        # MIN_EXCESS_PPM, starting from the typical excess at the peak.
+        start_excess = float(np.median([f[2] for f in fits])) - background
+        resolvable = (
+            round(float(np.log(start_excess / self.MIN_EXCESS_PPM) / (self.MIN_POINTS * step)), 2)
+            if start_excess > self.MIN_EXCESS_PPM and step > 0 else None
+        )
+        rates = np.array([f[0] for f in fits])
+        ach = float(np.median(rates))
+        q1, q3 = (float(v) for v in np.percentile(rates, [25, 75]))
+        r2 = float(np.median([f[1] for f in fits]))
+        litres = ach * volume_m3 / 3.6 if volume_m3 else None
         description = (
-            f"Estimated {weighted_ach:.2f} ACH ({category}) from {len(results)} decay periods. "
-            f"Average R²={avg_r_squared:.3f}."
+            f"After-hours air change {ach:.2f} h-1 (median of {len(fits)} CO2 decays, interquartile range "
+            f"{q1:.2f}-{q3:.2f}; background {background:.0f} ppm). Describes the empty room, not ventilation during use."
         )
-
+        if too_fast:
+            description += f" {too_fast} decay(s) were too fast to resolve at a {step:g} h sampling interval."
         return VentilationRateResult(
-            ach=round(weighted_ach, 2),
-            ventilation_l_s=round(ventilation_l_s, 1) if ventilation_l_s else None,
-            r_squared=round(avg_r_squared, 3),
-            initial_co2=round(float(np.mean([r.initial_co2 for r in results])), 1),
-            final_co2=self.outdoor_co2,
-            outdoor_co2=self.outdoor_co2,
-            confidence_interval=(round(ci_lower, 2), round(ci_upper, 2)),
-            quality_score=round(quality_score, 3),
-            category=category,
+            ach=round(ach, 2),
+            ventilation_l_s=round(litres, 1) if litres else None,
+            r_squared=round(r2, 3),
+            initial_co2=round(float(np.median([f[2] for f in fits])), 1),
+            final_co2=round(background, 1),
+            outdoor_co2=round(background, 1),
+            confidence_interval=(round(q1, 2), round(q3, 2)),
+            quality_score=round(len(fits) / candidates, 3) if candidates else 0.0,
+            category="after_hours",
             description=description,
+            decays=len(fits),
+            too_fast=too_fast,
+            step_hours=round(step, 3),
+            resolvable_max_ach=resolvable,
+            per_decay=[round(float(r), 3) for r in rates],
         )
 
-    def _identify_decay_periods(
-        self,
-        co2_series: pd.Series,
-        min_decay: float
-    ) -> List[pd.Series]:
-        """Identify periods where CO2 is decaying."""
-        segments = []
-        co2_diff = co2_series.diff()
-
-        in_decay = False
-        decay_start = None
-
-        for i in range(1, len(co2_series)):
-            if not in_decay:
-                # Look for start of decay (2 consecutive decreases)
-                if i >= 2 and co2_diff.iloc[i] < 0 and co2_diff.iloc[i - 1] < 0:
-                    if co2_series.iloc[i - 2] > co2_series.iloc[i] + min_decay:
-                        in_decay = True
-                        decay_start = i - 2
+    @staticmethod
+    def _identify_decay_periods(co2: pd.Series, min_decay: float, step: float) -> List[pd.Series]:
+        """Runs of falling CO2 that start at a local peak and drop by at least ``min_decay``.
+        A run ends when CO2 rises again (> 5 ppm) or at a data gap (> 3 steps)."""
+        values = co2.to_numpy(dtype=float)
+        times = co2.index
+        gap = pd.Timedelta(hours=3 * step)
+        segments: List[pd.Series] = []
+        i = 0
+        n = len(values)
+        while i < n - 1:
+            if values[i + 1] < values[i]:
+                j = i + 1
+                while j + 1 < n and values[j + 1] <= values[j] + 5 and times[j + 1] - times[j] <= gap:
+                    j += 1
+                if values[i] - values[j] >= min_decay and j - i >= 2:
+                    segments.append(co2.iloc[i:j + 1])
+                i = j
             else:
-                # Look for end of decay (increase or plateau)
-                if co2_diff.iloc[i] > 5:
-                    segment = co2_series.iloc[decay_start:i]
-                    if len(segment) >= 5:
-                        segments.append(segment)
-                    in_decay = False
-                    decay_start = None
-
-        # Handle decay extending to end
-        if in_decay and decay_start is not None:
-            segment = co2_series.iloc[decay_start:]
-            if len(segment) >= 5:
-                segments.append(segment)
-
+                i += 1
         return segments
-
-    def _analyze_decay_segment(
-        self,
-        co2_segment: pd.Series,
-        volume_m3: Optional[float]
-    ) -> Optional[VentilationRateResult]:
-        """Analyze a single decay segment to estimate ACH."""
-        if len(co2_segment) < 5:
-            return None
-
-        # Time in hours from start
-        if isinstance(co2_segment.index, pd.DatetimeIndex):
-            time_hours = (co2_segment.index - co2_segment.index[0]).total_seconds() / 3600
-            time_hours = np.array(time_hours)
-        else:
-            time_hours = np.arange(len(co2_segment), dtype=float)
-
-        co2_values = co2_segment.values.astype(float)
-
-        # Initial values
-        C0 = float(co2_values[0])
-        C_outdoor = self.outdoor_co2
-
-        # Exponential decay function
-        def decay_func(t, ach):
-            return C_outdoor + (C0 - C_outdoor) * np.exp(-ach * t)
-
-        try:
-            # Fit curve
-            popt, pcov = curve_fit(
-                decay_func,
-                time_hours,
-                co2_values,
-                p0=[1.0],
-                bounds=([0.1], [20.0]),
-            )
-
-            ach = float(popt[0])
-
-            # Calculate R²
-            y_pred = decay_func(time_hours, ach)
-            ss_res = np.sum((co2_values - y_pred) ** 2)
-            ss_tot = np.sum((co2_values - np.mean(co2_values)) ** 2)
-            r_squared = float(1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0)
-
-            # Confidence interval
-            perr = np.sqrt(np.diag(pcov))
-            ci_lower = ach - 1.96 * perr[0]
-            ci_upper = ach + 1.96 * perr[0]
-
-            # Ventilation in L/s
-            ventilation_l_s = None
-            if volume_m3:
-                ventilation_l_s = (ach * volume_m3 * 1000) / 3600
-
-            category = self._categorize_ach(ach)
-            quality_score = min(r_squared * (len(co2_segment) / 20), 1.0)
-
-            description = (
-                f"Estimated {ach:.2f} ACH ({category}). "
-                f"R²={r_squared:.3f}. "
-                f"CO2 decayed from {C0:.0f} to ~{C_outdoor:.0f} ppm."
-            )
-
-            return VentilationRateResult(
-                ach=round(ach, 2),
-                ventilation_l_s=round(ventilation_l_s, 1) if ventilation_l_s else None,
-                r_squared=round(r_squared, 3),
-                initial_co2=round(C0, 1),
-                final_co2=C_outdoor,
-                outdoor_co2=C_outdoor,
-                confidence_interval=(round(float(ci_lower), 2), round(float(ci_upper), 2)),
-                quality_score=round(quality_score, 3),
-                category=category,
-                description=description,
-            )
-
-        except Exception:
-            return None
-
-    def _categorize_ach(self, ach: float) -> str:
-        """Categorize ventilation based on ACH."""
-        if ach >= self.ACH_CATEGORIES["excellent"]:
-            return "excellent"
-        elif ach >= self.ACH_CATEGORIES["good"]:
-            return "good"
-        elif ach >= self.ACH_CATEGORIES["fair"]:
-            return "fair"
-        else:
-            return "poor"
 
     def calculate_required_ach(
         self,

@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+Found by an audit against EN 16798-1, BR18, the TAIL reference implementation and the
+tracer-gas decay literature, with synthetic data of known answer and real school data.
+
+- **EN 16798-1**: a parameter reaches a category when it is within the limits in 95 % of its
+  measured occupied hours (was 80-90 %, taken from rule tolerances); parameters are rated on
+  their own and the room takes the worst; missing values no longer count as compliant;
+  Category IV is everything outside III (no invented IV limits, no "below IV"); relative
+  humidity counts only for humidity-controlled rooms; running-mean weighting; timestamps
+  with a UTC offset are read in local time.
+- **BR18**: checked once over all occupied hours (each season had its own 100 h allowance);
+  hours from sample durations; § 447 and the 26/27 °C hours are labelled as indicators.
+- **After-hours air change** from CO₂ decay: log-linear fit with a per-room background,
+  unoccupied time only, fast decays no longer underestimated (5 h⁻¹ read as 3.9), median and
+  interquartile range, no unsourced quality bands.
+- **Recommendations** rebuilt on measured evidence: CO₂ above 1000 ppm, temperatures outside
+  the target range per season, hours above 26 °C, humidity. Removed rules that the data
+  could not support (envelope from a correlation sign, winter "overheating" above 23 °C,
+  summer "undercooling", kWh solar figures from a default window area, +1 ACH what-if on the
+  after-hours rate, fixed −1.5 °C shading effect). Effects are stated estimates; priority
+  actions show the range over the rooms instead of one room's text.
+- RC thermal and operational EPC API endpoints return 501 (they could not work).
+
 ### Added
 - MCP server (`hvx mcp`, `mcp` extra): AI assistants can load data (CSV, Climify/DMI,
   live sites), build reports, inspect buildings/actions/rooms and export HTML/PDF/JSON/CSV;

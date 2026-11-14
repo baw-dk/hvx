@@ -46,7 +46,7 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "Action": "Tiltag",
         "Rooms": "Lokaler",
         "Where": "Hvor",
-        "Expected benefit (worst case)": "Forventet effekt (værste lokale)",
+        "Expected effect (range over the rooms)": "Forventet effekt (spænd over lokalerne)",
         "and {n} more": "og {n} flere",
         "Building": "Bygning",
         "Category": "Kategori",
@@ -69,9 +69,17 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "Hours above limits (occupied)": "Timer over grænseværdier (brugstid)",
         "By time of day": "Pr. tidspunkt",
         "{period}: CO₂ mean {mean}, > 1000 ppm {pct} of the time": "{period}: CO₂ middel {mean}, over 1000 ppm {pct} af tiden",
-        "Air change from CO₂ decay": "Luftskifte beregnet ud fra CO₂-henfald",
-        "Decays mostly occur after hours, when mechanical ventilation may be off.":
-            "Henfaldene sker mest efter brugstid, hvor den mekaniske ventilation kan være slukket.",
+        "After-hours air change (CO₂ decay)": "Luftskifte uden for brugstiden (CO₂-henfald)",
+        "per hour": "pr. time",
+        "×{lo}–×{hi} outdoor air during use (median ×{mid}; steady-state estimate)":
+            "×{lo}–×{hi} udeluft i brugstiden (median ×{mid}; skøn ud fra ligevægt)",
+        "{lo}–{hi} fewer hours above 26 °C per room (estimate)": "{lo}–{hi} færre timer over 26 °C pr. lokale (skøn)",
+        "median of {n} decays, interquartile range {lo}–{hi}; background {bg} ppm":
+            "median af {n} henfald, kvartilafstand {lo}–{hi}; baggrundsniveau {bg} ppm",
+        "Measured while the room is empty, when ventilation may be reduced or off: it does not show the ventilation during use.":
+            "Målt mens lokalet er tomt, hvor ventilationen kan være reduceret eller slukket: det viser ikke ventilationen i brugstiden.",
+        "At this sampling interval rates above about {x} per hour cannot be resolved.":
+            "Ved dette måleinterval kan luftskifter over ca. {x} pr. time ikke bestemmes.",
         "{n} recommendation(s)": "{n} anbefaling(er)",
         "Benefit": "Effekt",
         "Data: {n} samples, {start} → {end}, {pct} complete": "Data: {n} målinger, {start} → {end}, {pct} komplet",
@@ -183,6 +191,8 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "<strong>BR18.</strong> Checked once over all assessed hours of the period. The 100 h above 26 °C and 25 h above 27 °C are the BR18 guidance values on thermal indoor climate, which normally satisfy the requirement for offices and are documented by calculation; for schools the building owner sets the hours. § 447 (1000 ppm CO₂ in teaching rooms) is a design requirement. Applied to measured data, both are indicators, not a compliance verdict.":
             "<strong>BR18.</strong> Vurderes én gang over alle brugstimer i perioden. 100 timer over 26 °C og 25 timer over 27 °C er de vejledende værdier i BR18's vejledning om termisk indeklima, som normalt opfylder kravet for kontorer og dokumenteres ved beregning; for skoler fastsætter bygherren timetallet. § 447 (1000 ppm CO₂ i undervisningsrum) er et dimensioneringskrav. Brugt på målte data er begge indikatorer, ikke en afgørelse om overholdelse.",
         "BR18 indicators not met: {rules}.": "BR18-indikatorer ikke opfyldt: {rules}.",
+        "<strong>Recommendations.</strong> Rule-based on measured occupied time: CO₂ above 1000 ppm, temperatures outside the target category's range per season, hours above 26 °C, humidity below 25 % or above 60 %. A rule fires above 5 % of the occupied time; priorities (high from 25 %, medium from 10 %) are hvx's own judgement. Expected effects are estimates with stated assumptions: the outdoor-air factor assumes steady state; hours above 26 °C avoided by shading come from a regression on solar irradiance and outdoor temperature and assume shading removes 70 % of the measured solar effect.":
+            "<strong>Anbefalinger.</strong> Regelbaserede ud fra målt brugstid: CO₂ over 1000 ppm, temperaturer uden for målkategoriens interval i hver sæson, timer over 26 °C, luftfugtighed under 25 % eller over 60 %. En regel udløses over 5 % af brugstiden; prioriteterne (høj fra 25 %, middel fra 10 %) er hvx' egen vurdering. Forventede effekter er skøn med angivne forudsætninger: udeluftfaktoren forudsætter ligevægt; timer over 26 °C, som solafskærmning kan fjerne, kommer fra en regression på solindstråling og udetemperatur og forudsætter, at afskærmningen fjerner 70 % af den målte soleffekt.",
         # --- key findings
         "{n} of {total} rooms analysed ({pct} coverage)": "{n} af {total} lokaler analyseret ({pct} dækning)",
         ", {area} m²": ", {area} m²",
