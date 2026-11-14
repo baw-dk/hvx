@@ -784,6 +784,7 @@ class ReportRequest(BaseModel):
     top_n_rooms: int = 15
     include_simulations: bool = True
     title: Optional[str] = None
+    brand: Optional[str] = None  # built-in brand name (e.g. "baw"); None: white-label
 
 
 def _require_portfolio() -> None:
@@ -792,9 +793,16 @@ def _require_portfolio() -> None:
 
 
 def _report_config(request: ReportRequest) -> ReportConfig:
+    from hvx.reporting import available_brands
+    from hvx.reporting.branding import WHITE_LABEL
+
+    # Only built-in brands over HTTP: a file path would let callers read server files.
+    if request.brand and request.brand.lower() not in WHITE_LABEL and request.brand.lower() not in available_brands():
+        raise HTTPException(status_code=422, detail=f"brand must be one of {available_brands()} or omitted")
     try:
         return ReportConfig(
             title=request.title,
+            branding=request.brand.lower() if request.brand else None,
             language=request.language,
             seasons=tuple(_SEASON_ALIASES.get(s.lower(), s.lower()) for s in request.seasons),
             target_category=request.target_category,

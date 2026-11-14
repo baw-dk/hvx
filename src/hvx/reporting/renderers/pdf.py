@@ -20,28 +20,41 @@ from typing import Optional, Union
 
 from ..i18n import Translator
 from ..model import PortfolioReport
-from .html import render_html
+from .html import CONFIG_BRAND, render_html, resolve_brand
 
 FOOTER = (
     '<div style="font-size:7.5px;width:100%;margin:0 12mm;color:#6b7280;'
-    'font-family:system-ui,sans-serif;display:flex;justify-content:space-between">'
-    '<span>{title}</span><span>{page} <span class="pageNumber"></span> {of} <span class="totalPages"></span></span></div>'
+    'font-family:system-ui,sans-serif;display:flex;justify-content:space-between;gap:12px">'
+    "<span>{left}</span>{middle}"
+    '<span style="white-space:nowrap">{page} <span class="pageNumber"></span> {of} <span class="totalPages"></span></span></div>'
 )
 
 
-def render_pdf(report: PortfolioReport, executable_path: Optional[str] = None) -> bytes:
+def _footer(report: PortfolioReport, t: Translator, brand) -> str:
+    """White-label: report title and page. Branded: company and CVR number, title, page."""
+    title = escape(report.portfolio_name)
+    if brand:
+        company = brand.legal_name or brand.name
+        if brand.cvr:
+            company = f"{company} · {t('CVR no. {cvr}', cvr=brand.cvr)}"
+        left, middle = escape(company), f"<span>{title}</span>"
+    else:
+        left, middle = title, ""
+    return FOOTER.format(
+        left=left, middle=middle, page="Side" if t.language == "da" else "Page", of="af" if t.language == "da" else "of"
+    )
+
+
+def render_pdf(report: PortfolioReport, executable_path: Optional[str] = None, brand=CONFIG_BRAND) -> bytes:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise ImportError('PDF output needs Playwright: pip install "hvx[pdf]" && playwright install chromium') from exc
 
     t = Translator(report.config.get("language", "en"))
-    html = render_html(report)
-    footer = FOOTER.format(
-        title=escape(report.portfolio_name),
-        page="Side" if t.language == "da" else "Page",
-        of="af" if t.language == "da" else "of",
-    )
+    brand = resolve_brand(report, brand)
+    html = render_html(report, brand)
+    footer = _footer(report, t, brand)
     executable_path = executable_path or os.environ.get("HVX_CHROMIUM_PATH") or None
     with sync_playwright() as p:
         browser = p.chromium.launch(**({"executable_path": executable_path} if executable_path else {}))
@@ -63,10 +76,10 @@ def render_pdf(report: PortfolioReport, executable_path: Optional[str] = None) -
             browser.close()
 
 
-def write_pdf(report: PortfolioReport, path: Union[str, Path], executable_path: Optional[str] = None) -> Path:
+def write_pdf(report: PortfolioReport, path: Union[str, Path], executable_path: Optional[str] = None, brand=CONFIG_BRAND) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(render_pdf(report, executable_path))
+    path.write_bytes(render_pdf(report, executable_path, brand))
     return path
 
 

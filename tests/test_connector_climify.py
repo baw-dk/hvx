@@ -95,3 +95,9 @@ def test_slug_transliterates_danish():
     assert slug("Fløng Skole") == "floeng-skole"
     assert slug("Ole Rømer-Skolen / Kælder") == "ole-roemer-skolen-kaelder"
     assert slug("Åbyhøj") == "aabyhoej"
+
+
+def test_parameters_filter(export):
+    rooms_dir, _ = export
+    result = load_climify_folder(rooms_dir, [BuildingSpec("Nordskolen", "Nordskolen")], parameters=("temperature", "co2"))
+    assert all(set(r.timeseries_data) == {"temperature", "co2"} for r in result.rooms.values())

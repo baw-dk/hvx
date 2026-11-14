@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Report branding: white-label by default (no company details anywhere); a brand adds
+  logo or wordmark, accent colour and a company block with CVR number to the HTML report
+  and the PDF footer. Built-in `baw` template (`--brand baw`, `ReportConfig(branding="baw")`,
+  API `brand`) or any brand YAML file; required fields such as the CVR number must be filled
+  before a branded report renders. `render(..., brand=None)` white-labels an existing report.
+- TAIL rating (Thermal, Acoustic, Indoor air, Luminous) in reports: a left-to-right hierarchy
+  (overall → domains → measured parameters, unmeasured parameters collapsed per domain), a
+  building comparison table with the spread of room ratings, and TAIL badges on room cards.
+- `load_climify_folder(..., parameters=...)` loads only the listed parameters.
 - Report languages: `ReportConfig(language="da")` gives a Danish report (texts, recommendations,
   key findings, Danish number and date formats); `introduction` and `notes` for client-specific text.
 - PDF output (`.pdf` / `render(report, "pdf")`) via headless Chromium; `pdf` extra.

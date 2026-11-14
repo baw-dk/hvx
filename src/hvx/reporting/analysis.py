@@ -198,6 +198,11 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
         tail = results.get("tail")
         if isinstance(tail, dict):
             season_result.tail_rating = tail.get("overall_rating_label")
+            season_result.tail = {
+                "overall": tail.get("overall_rating_label"),
+                "domains": {k: v.get("rating_label") for k, v in (tail.get("domains") or {}).items() if isinstance(v, dict)},
+                "parameters": {k: v.get("rating") for k, v in (tail.get("parameters") or {}).items() if isinstance(v, dict)},
+            }
         br18 = results.get("br18")
         if isinstance(br18, dict) and br18.get("overall_pass") is not None:
             season_result.br18_pass = bool(br18["overall_pass"])
@@ -279,6 +284,7 @@ def _combine(report: RoomReport, assessments: List[IEQAssessment], config: Repor
     tails = [ComfortCategory.parse(s.tail_rating) for s in report.seasons if s.tail_rating]
     tail_worst = ComfortCategory.worst(*tails)
     report.tail_rating = tail_worst.value if tail_worst else None
+    report.tail = combine_tail([s.tail for s in report.seasons if s.tail])
     passes = [s.br18_pass for s in report.seasons if s.br18_pass is not None]
     report.br18_pass = all(passes) if passes else None
     report.br18_failed = sorted({name for s in report.seasons for name in s.br18_failed})
@@ -367,6 +373,24 @@ def _exceedance(report: RoomReport, df: pd.DataFrame, hours: pd.Series, config: 
                 stats[f"{parameter}_mean"] = _round(sub[parameter].mean(), 1)
                 stats[f"{parameter}>{limits[0]:g}_pct"] = round(100.0 * over / valid, 1) if valid else None
         report.period_breakdown[name] = stats
+
+
+def _worst_label(labels) -> Optional[str]:
+    worst = ComfortCategory.worst(*(ComfortCategory.parse(x) for x in labels if x))
+    return worst.value if worst else None
+
+
+def combine_tail(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Worst TAIL label per parameter, domain and overall across several assessments (seasons)."""
+    if not parts:
+        return {}
+    params = sorted({k for p in parts for k in (p.get("parameters") or {})})
+    domains = sorted({k for p in parts for k in (p.get("domains") or {})})
+    return {
+        "overall": _worst_label(p.get("overall") for p in parts),
+        "domains": {d: _worst_label((p.get("domains") or {}).get(d) for p in parts) for d in domains},
+        "parameters": {k: _worst_label((p.get("parameters") or {}).get(k) for p in parts) for k in params},
+    }
 
 
 def _profiles(report: RoomReport, df: pd.DataFrame, hours: pd.Series, config: ReportConfig) -> None:

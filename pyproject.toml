@@ -72,7 +72,7 @@ include = ["hvx*"]
 
 [tool.setuptools.package-data]
 "hvx.core" = ["py.typed", "semantics/ontology/*.ttl", "config/**/*.yaml"]
-"hvx.reporting" = ["templates/*.j2"]
+"hvx.reporting" = ["templates/*.j2", "brands/*.yaml", "brands/*.svg", "brands/*.png"]
 "hvx.standards" = ["*/config.yaml", "*/docs/*"]
 "hvx.simulations" = ["models/*/config.yaml"]
 

@@ -110,6 +110,18 @@ CATALOG: Dict[str, Dict[str, str]] = {
             "Timer over 26 °C i brugstiden for de lokaler, der kræver opmærksomhed, og for hver bygning (bygningsrækker: gennemsnit pr. lokale).",
         "Building average": "Gns. for bygningen",
         "Time patterns": "Mønstre over døgn og år",
+        "TAIL rating": "TAIL-vurdering",
+        "{n} rooms": "{n} lokaler",
+        "not assessed": "ikke vurderet",
+        "not measured": "ikke målt",
+        "Typical room": "Typisk lokale",
+        "Overall": "Samlet",
+        "Badges: the typical room. Bars below: how the rooms are spread over I–IV.":
+            "Mærkerne viser det typiske lokale; bjælkerne under dem, hvordan lokalerne fordeler sig på I–IV.",
+        "Report prepared by": "Rapport udarbejdet af",
+        "CVR no. {cvr}": "CVR-nr. {cvr}",
+        "TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read the tree from left to right: each domain takes its worst parameter and the overall rating its worst domain. For a group of rooms each parameter shows the typical room (rounded mean of the rooms' ratings). Grey, dashed: not measured, so the domain is not rated.":
+            "TAIL vurderer det termiske (T), akustiske (A), luftkvaliteten (I) og lysforholdene (L) fra I (bedst) til IV. Træet læses fra venstre mod højre: et domæne får sin dårligste parameter og den samlede vurdering det dårligste domæne. For en gruppe lokaler viser hver parameter det typiske lokale (afrundet gennemsnit af lokalernes vurdering). Grå, stiplet: ikke målt, så domænet vurderes ikke.",
         # --- method section
         "<strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). The achieved category is the best category whose limits are met for the share of time the standard requires.":
             "<strong>Standard.</strong> Lokalerne vurderes efter DS/EN 16798-1 (samt TAIL og BR18, hvor de er relevante). Den opnåede kategori er den bedste kategori, hvis grænser overholdes i den andel af tiden, standarden kræver.",
