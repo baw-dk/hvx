@@ -39,7 +39,7 @@ def test_report_html_and_csv(client):
 
 
 def test_report_validation(client):
-    assert client.post("/api/reports", json={"format": "pdf"}).status_code == 422
+    assert client.post("/api/reports", json={"format": "docx"}).status_code == 422
     assert client.post("/api/reports", json={"seasons": ["spring"]}).status_code == 422
 
 

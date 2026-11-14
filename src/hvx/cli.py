@@ -69,15 +69,17 @@ def cli(verbose: int) -> None:
 @cli.command()
 @click.option("--site", "site_path", type=click.Path(exists=True, dir_okay=False), help="Site YAML with live sources.")
 @click.option("--csv", "csv_path", type=click.Path(exists=True), help="CSV folder (connectors.csv layouts).")
-@click.option("-o", "--output", type=click.Path(dir_okay=False), required=True, help="Output file; format from extension (.html/.json/.csv).")
+@click.option("-o", "--output", type=click.Path(dir_okay=False), required=True, multiple=True,
+              help="Output file(s); format from extension (.html/.json/.csv/.pdf). Repeat for several.")
 @click.option("--days", type=float, default=14.0, show_default=True, help="Live window length (with --site).")
 @click.option("--interval", default="15min", show_default=True, help="Resampling interval for live data.")
 @click.option("--season", "seasons", type=SEASONS, multiple=True, help="Repeat for full year: --season winter --season summer.")
 @click.option("--target", "target_category", type=click.Choice(["I", "II", "III", "IV"]), default="II", show_default=True)
 @click.option("--title", default=None)
+@click.option("--lang", "language", type=click.Choice(["en", "da"]), default="en", show_default=True, help="Report language.")
 @click.option("--workers", type=int, default=None, help="Parallel workers (default: auto).")
 @click.option("--no-simulations", is_flag=True, help="Skip ventilation/correlation/scenario models (faster).")
-def report(site_path, csv_path, output, days, interval, seasons, target_category, title, workers, no_simulations) -> None:
+def report(site_path, csv_path, output, days, interval, seasons, target_category, title, language, workers, no_simulations) -> None:
     """Build an IEQ report."""
     from hvx.reporting import ReportBuilder, ReportConfig, write
 
@@ -85,6 +87,7 @@ def report(site_path, csv_path, output, days, interval, seasons, target_category
         raise click.UsageError("Give exactly one of --site or --csv.")
     config = ReportConfig(
         title=title,
+        language=language,
         seasons=tuple(seasons) or ("winter",),
         target_category=target_category,
         max_workers=workers,
@@ -104,10 +107,13 @@ def report(site_path, csv_path, output, days, interval, seasons, target_category
         if loaded.portfolio is None:
             raise click.ClickException("No portfolio found in the CSV folder.")
         rep = ReportBuilder(config).build(loaded.portfolio, loaded.buildings, loaded.floors, loaded.rooms)
-    path = write(rep, output)
+    try:
+        paths = [write(rep, out) for out in output]
+    except ImportError as exc:
+        raise click.ClickException(str(exc)) from exc
     s = rep.summary
     click.echo(
-        f"Wrote {path}  ({s.rooms_analysed}/{s.rooms_total} rooms, category {s.category or '–'}, "
+        f"Wrote {', '.join(map(str, paths))}  ({s.rooms_analysed}/{s.rooms_total} rooms, category {s.category or '–'}, "
         f"IEQ score {s.ieq_score if s.ieq_score is not None else '–'}, {rep.duration_s}s)"
     )
 

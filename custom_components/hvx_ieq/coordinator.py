@@ -35,6 +35,7 @@ from .const import (
     DOMAIN,
     LOGGER,
     SOURCE_NAME,
+    target_category,
 )
 from .discovery import area_infos
 
@@ -110,7 +111,7 @@ class HvxCoordinator(DataUpdateCoordinator[LiveSnapshot]):
             update_interval=timedelta(minutes=float(options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))),
         )
         self.window = timedelta(days=float(options.get(CONF_WINDOW_DAYS, DEFAULT_WINDOW_DAYS)))
-        self.target_category = str(options.get(CONF_TARGET_CATEGORY, DEFAULT_TARGET_CATEGORY))
+        self.target_category = target_category(options.get(CONF_TARGET_CATEGORY, DEFAULT_TARGET_CATEGORY))
         self.site = build_site(hass, entry)
         # Recorder history is change-driven: values hold until the next state.
         self.source = InMemorySource(hold_values=True)

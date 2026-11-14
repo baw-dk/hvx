@@ -102,11 +102,18 @@ def mqtt_broker():
     port = _free_port()
     loop = asyncio.new_event_loop()
     config = {"listeners": {"default": {"type": "tcp", "bind": f"127.0.0.1:{port}"}}, "plugins": {"amqtt.plugins.authentication.AnonymousAuthPlugin": {"allow_anonymous": True}}}
-    broker = amqtt_broker.Broker(config, loop=loop)
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
+
+    async def start():
+        # Create the broker inside the loop that runs it: on Python 3.10 a broker built
+        # outside its loop mixes futures from two loops and drops messages.
+        broker = amqtt_broker.Broker(config)
+        await broker.start()
+        return broker
+
     try:
-        asyncio.run_coroutine_threadsafe(broker.start(), loop).result(10)
+        broker = asyncio.run_coroutine_threadsafe(start(), loop).result(10)
     except Exception as exc:  # pragma: no cover - broker API drift
         loop.call_soon_threadsafe(loop.stop)
         pytest.skip(f"amqtt broker unavailable: {exc}")

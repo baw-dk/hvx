@@ -78,7 +78,7 @@ class ReportBuilder:
             summary=summary,
             buildings=building_reports,
             rooms=room_reports,
-            actions=group_actions(room_reports, config.max_actions),
+            actions=group_actions(room_reports, config.max_actions, qualify=len(building_reports) > 1),
             worst_room_ids=worst_rooms(room_reports, config.top_n_rooms),
             warnings=warnings,
         )

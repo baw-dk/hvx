@@ -776,7 +776,8 @@ _SEASON_ALIASES = {"heating": "winter", "cooling": "summer"}
 
 
 class ReportRequest(BaseModel):
-    format: str = "json"  # json | html | csv
+    format: str = "json"  # json | html | csv | pdf
+    language: str = "en"  # en | da
     seasons: List[str] = ["winter"]  # winter | summer | all_year (heating/cooling accepted)
     target_category: str = "II"
     building_ids: Optional[List[str]] = None
@@ -794,6 +795,7 @@ def _report_config(request: ReportRequest) -> ReportConfig:
     try:
         return ReportConfig(
             title=request.title,
+            language=request.language,
             seasons=tuple(_SEASON_ALIASES.get(s.lower(), s.lower()) for s in request.seasons),
             target_category=request.target_category,
             top_n_rooms=request.top_n_rooms,
@@ -818,7 +820,10 @@ def create_report(request: ReportRequest):
     report = ReportBuilder(_report_config(request)).build(
         _store.portfolio, _store.buildings, _store.floors, _store.rooms, building_ids=request.building_ids
     )
-    body = render(report, fmt)
+    try:
+        body = render(report, fmt)
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
     headers = {}
     if fmt != "json":
         headers["Content-Disposition"] = f'attachment; filename="ieq-report.{fmt}"'

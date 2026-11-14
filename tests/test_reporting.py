@@ -175,7 +175,7 @@ def test_renderers(portfolio):
     assert len(rows) == 6 and rows[0]["brick_class"].startswith(("brick:", "ieq:"))
 
     with pytest.raises(ValueError):
-        render(report, "pdf")
+        render(report, "docx")
 
 
 def test_legacy_html_service(tmp_path, portfolio):
@@ -289,3 +289,35 @@ def test_ventilation_recommendation_follows_measured_co2():
     assert kinds(98.0) == set()  # good CO2 during use: low after-hours ACH alone is not a problem
     assert kinds(60.0) == {RecommendationType.VENTILATION}
     assert kinds(None) == {RecommendationType.VENTILATION}  # no CO2 assessment: fall back to ACH
+
+
+def test_danish_report(portfolio):
+    """language="da": Danish texts, numbers (decimal comma, NBSP before %) and recommendations."""
+    report = ReportBuilder(ReportConfig(language="da", parallel_backend="serial", introduction="Første afsnit.\n\nAndet afsnit.",
+                                        notes=("En bemærkning.",))).build(*portfolio)
+    html = render(report, "html")
+    for danish in ("Hovedresultater", "Prioriterede tiltag", "Lokaler der kræver opmærksomhed", "Alle lokaler", "Metode",
+                   "Mønstre over døgn og år", "<p>Andet afsnit.</p>", "En bemærkning.", 'lang="da"'):
+        assert danish in html, danish
+    for english in ("Key findings", "Priority actions", "Rooms needing attention", "All rooms", "Show all"):
+        assert english not in html, english
+    assert any("lokalerne" in h for h in report.highlights)
+    assert any("\u00a0%" in i for r in report.rooms for i in r.issues)  # "72,7 %"
+    recs = [rec for r in report.rooms for rec in r.recommendations]
+    assert recs and all(rec["key"] for rec in recs) and any(rec["title"].startswith(("Øg", "Reducer", "Etabler", "Begræns", "Gennemgå")) for rec in recs)
+    assert report.rooms[0].occupancy.startswith("man–fre kl.")
+    assert report.summary.profiles  # heatmap data
+    with pytest.raises(ValueError):
+        ReportConfig(language="xx")
+
+
+def test_pdf_output(portfolio, tmp_path):
+    pytest.importorskip("playwright")
+    from hvx.reporting.renderers.pdf import render_pdf
+
+    report = ReportBuilder(ReportConfig(language="da", **FAST)).build(*portfolio)
+    try:
+        pdf = render_pdf(report)
+    except Exception as exc:  # no browser in this environment
+        pytest.skip(f"Chromium not available: {exc}")
+    assert pdf.startswith(b"%PDF") and len(pdf) > 10_000

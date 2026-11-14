@@ -50,6 +50,9 @@ class ReportConfig:
     """
 
     title: Optional[str] = None
+    language: str = "en"  # "en" or "da": report texts, numbers and dates
+    introduction: Optional[str] = None  # shown under the title; blank lines separate paragraphs
+    notes: Tuple[str, ...] = ()  # extra method/data notes shown in the method section
     seasons: Tuple[str, ...] = ("winter",)
     target_category: str = "II"
     default_country: str = "DK"
@@ -85,6 +88,10 @@ class ReportConfig:
         self.target_category = str(self.target_category).upper()
         if self.target_category not in VALID_CATEGORIES:
             raise ValueError(f"target_category must be one of {VALID_CATEGORIES}")
+        from .i18n import LANGUAGES
+
+        if self.language not in LANGUAGES:
+            raise ValueError(f"language must be one of {LANGUAGES}")
         if self.parallel_backend not in ("auto", "serial", "thread", "process"):
             raise ValueError("parallel_backend must be auto, serial, thread or process")
         if not 0 < self.group_category_threshold <= 1:

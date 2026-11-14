@@ -73,7 +73,7 @@ async def _create_entry(hass: HomeAssistant, area_ids: dict[str, str]):
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "user"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"name": "Test office", "building_type": "office", "target_category": "II", "window_days": 1, "scan_interval": 15},
+        {"name": "Test office", "building_type": "office", "target_category": "cat_ii", "window_days": 1, "scan_interval": 15},
     )
     assert result["step_id"] == "areas"
     # all three areas with sensors are suggested
@@ -160,7 +160,7 @@ async def test_full_flow_entities_and_report(hass: HomeAssistant, recorder_mock,
     # Options: stricter target reloads the entry
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"target_category": "I", "window_days": 1, "scan_interval": 15, "areas": [office]}
+        result["flow_id"], {"target_category": "cat_i", "window_days": 1, "scan_interval": 15, "areas": [office]}
     )
     assert result["step_id"] == "sensors"
     result = await hass.config_entries.options.async_configure(
@@ -168,7 +168,8 @@ async def test_full_flow_entities_and_report(hass: HomeAssistant, recorder_mock,
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    assert entry.options[CONF_TARGET_CATEGORY] == "I" and list(entry.options[CONF_ROOMS]) == [office]
+    assert entry.options[CONF_TARGET_CATEGORY] == "cat_i" and list(entry.options[CONF_ROOMS]) == [office]
+    assert entry.runtime_data.target_category == "I"
     assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{office}_ieq_score")
 
     assert await hass.config_entries.async_unload(entry.entry_id)
