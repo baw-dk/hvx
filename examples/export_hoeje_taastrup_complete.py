@@ -14,7 +14,7 @@ import json
 from datetime import datetime
 from typing import Dict, Any
 
-from connectors.csv.portfolio_loader import load_hoeje_taastrup
+from hvx.connectors.csv.portfolio_loader import load_hoeje_taastrup
 
 
 def entity_to_dict(entity, include_analysis: bool = True) -> Dict[str, Any]:

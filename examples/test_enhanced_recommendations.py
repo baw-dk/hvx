@@ -12,9 +12,9 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-from simulations.models.correlations import ClimateCorrelationModel
-from simulations.models.recommendations import SmartRecommendationsModel
-from simulations.models.scenario import ScenarioImpactModel
+from hvx.simulations.models.correlations import ClimateCorrelationModel
+from hvx.simulations.models.recommendations import SmartRecommendationsModel
+from hvx.simulations.models.scenario import ScenarioImpactModel
 
 
 def generate_sample_data(

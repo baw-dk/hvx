@@ -1,0 +1,39 @@
+# Example site file for `hvx report --site`, `hvx watch` and `hvx check`.
+# Generate a skeleton from a BIM model with:  hvx site from-ifc building.ifc -o site.yaml
+name: Head office
+country: DK
+timezone: Europe/Copenhagen
+
+sources:
+  default:
+    type: homeassistant
+    url: http://homeassistant.local:8123
+    token_env: HA_TOKEN        # export HA_TOKEN=<long-lived access token>; never put the token here
+
+buildings:
+  - id: hq
+    name: HQ
+    building_type: office
+    floors:
+      - id: hq-0
+        name: Ground floor
+        floor_number: 0
+        rooms:
+          - id: meeting-101
+            name: Meeting 1.01
+            room_type: meeting_room
+            area_m2: 24
+            requirements:            # optional design targets (override the category limits)
+              target_category: II
+              co2_max_ppm: 1000
+            sensors:
+              temperature: sensor.meeting_101_temperature
+              co2: sensor.meeting_101_co2
+              humidity: sensor.meeting_101_humidity
+          - id: office-102
+            name: Open office 1.02
+            room_type: open_office
+            area_m2: 80
+            sensors:
+              temperature: sensor.office_102_temperature
+              co2: sensor.office_102_co2

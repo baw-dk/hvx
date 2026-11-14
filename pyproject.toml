@@ -4,66 +4,71 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hvx"
-version = "0.2.0"
-description = "HVAC Analytics for Existing Buildings - Indoor Environmental Quality"
+version = "0.3.0"
+description = "Indoor environmental quality (IEQ) analytics for buildings: EN 16798-1, TAIL, BR18, live monitoring and IFC/Brick interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Proprietary License"}
 authors = [
     {name = "HVX", email = "bruno.adam@pm.me"}
 ]
-keywords = ["ieq", "analytics", "building", "environmental-quality", "compliance"]
-
+keywords = ["ieq", "indoor-environment", "en16798", "building", "brick-schema", "ifc", "home-assistant"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
+# Kept deliberately lean: everything here has wheels for glibc and musl
+# (Home Assistant OS) platforms. Heavier features are extras.
 dependencies = [
-    "pandas>=2.0.0",
-    "numpy>=1.24.0",
-    "pydantic>=2.0.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "pydantic>=2.0",
     "pyyaml>=6.0",
-    "plotly>=5.14.0",
-    "jinja2>=3.1.0",
-    "click>=8.1.0",
-    "rich>=13.0.0",
-    "openpyxl>=3.1.0",  # Excel support
-    "python-dateutil>=2.8.0",
-    "brickschema>=0.6.0",  # Brick Schema ontology
-    "rdflib>=7.0.0",  # RDF graph support (Brick export/import)
-    "scipy>=1.10.0",
-    "pythermalcomfort>=2.8.0",  # EN 16798 adaptive comfort
+    "jinja2>=3.1",
     "holidays>=0.42",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]
+brick = ["rdflib>=7.0"]
 ifc = ["ifcopenshell>=0.8.0"]
-api = ["fastapi>=0.109.0", "uvicorn[standard]>=0.27.0", "python-multipart>=0.0.9"]
-dev = ["pytest>=7.4.0", "httpx>=0.27.0", "ifcopenshell>=0.8.0", "fastapi>=0.109.0", "python-multipart>=0.0.9"]
-
-
+comfort = ["pythermalcomfort>=2.8"]  # EN 16798 adaptive model via pythermalcomfort (pulls numba)
+ml = ["scikit-learn>=1.3"]  # isolation-forest outlier detection
+api = ["fastapi>=0.109", "uvicorn[standard]>=0.27", "python-multipart>=0.0.9"]
+ui = ["streamlit>=1.32"]
+all = ["hvx[brick,ifc,comfort,ml,api]"]
+dev = [
+    "hvx[brick,ifc,api]",
+    "pytest>=7.4",
+    "httpx>=0.27",
+    "brickschema>=0.7",
+    "build>=1.0",
+]
 
 [project.scripts]
-ieq = "core.cli.main:cli"
-hvx = "core.cli.main:cli"  # Backwards compatibility
+hvx = "hvx.cli:cli"
 
 [project.urls]
 Homepage = "https://brunoadam.eu/"
 Repository = "https://github.com/bruadam/hvx"
 
 [tool.setuptools.packages.find]
-include = ["core*", "connectors*", "standards*", "simulations*", "app*", "reporting*"]
+where = ["src"]
+include = ["hvx*"]
 
 [tool.setuptools.package-data]
-core = ["py.typed", "semantics/ontology/*.ttl", "config/**/*.yaml"]
-reporting = ["templates/*.j2"]
-standards = ["*/config.yaml", "*/docs/*"]
-simulations = ["models/*/config.yaml"]
+"hvx.core" = ["py.typed", "semantics/ontology/*.ttl", "config/**/*.yaml"]
+"hvx.reporting" = ["templates/*.j2"]
+"hvx.standards" = ["*/config.yaml", "*/docs/*"]
+"hvx.simulations" = ["models/*/config.yaml"]
 
 [tool.black]
 line-length = 100
@@ -103,6 +108,7 @@ warn_no_return = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -111,7 +117,7 @@ addopts = [
 ]
 
 [tool.coverage.run]
-source = ["core"]
+source = ["hvx"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

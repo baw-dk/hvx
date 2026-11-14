@@ -19,9 +19,9 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # Direct imports to avoid circular dependencies
-from simulations.models.correlations.model import ClimateCorrelationModel
-from simulations.models.correlations.seasonal_thermal_analysis import SeasonalThermalAnalyzer
-from simulations.models.correlations.solar_gain_analysis import SolarGainUtilizationAnalyzer
+from hvx.simulations.models.correlations.model import ClimateCorrelationModel
+from hvx.simulations.models.correlations.seasonal_thermal_analysis import SeasonalThermalAnalyzer
+from hvx.simulations.models.correlations.solar_gain_analysis import SolarGainUtilizationAnalyzer
 
 
 def generate_sample_data(
