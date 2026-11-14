@@ -31,17 +31,44 @@ def canonical_name(name: str) -> str:
     return metric.value if metric is not None else str(name).strip().lower()
 
 
-def to_datetime_index(values: List[Any]) -> pd.DatetimeIndex:
-    """Parse timestamps to a tz-naive UTC-based DatetimeIndex (NaT for bad values)."""
-    idx = pd.to_datetime(pd.Series(list(values), dtype="object"), errors="coerce", utc=True, format="mixed")
-    return pd.DatetimeIndex(idx).tz_convert(None)
+# Local time zone per country, for timestamps that carry a UTC offset.
+COUNTRY_TIMEZONES = {
+    "DK": "Europe/Copenhagen", "SE": "Europe/Stockholm", "NO": "Europe/Oslo", "FI": "Europe/Helsinki",
+    "DE": "Europe/Berlin", "NL": "Europe/Amsterdam", "BE": "Europe/Brussels", "FR": "Europe/Paris",
+    "GB": "Europe/London", "IE": "Europe/Dublin", "ES": "Europe/Madrid", "IT": "Europe/Rome",
+    "AT": "Europe/Vienna", "CH": "Europe/Zurich", "PL": "Europe/Warsaw", "IS": "Atlantic/Reykjavik",
+}
+_TZ_SUFFIX = r"(?:Z|[+-]\d{2}:?\d{2})$"
+
+
+def to_datetime_index(values: List[Any], timezone: Optional[str] = None) -> pd.DatetimeIndex:
+    """
+    Parse timestamps to a tz-naive DatetimeIndex in local time (NaT for bad values).
+
+    Naive timestamps are taken as local time already. Timestamps with a UTC offset are
+    converted to ``timezone`` (local wall-clock time) so occupied hours such as 08–16 and
+    month/season boundaries refer to local time; without a timezone they become UTC.
+    """
+    raw = pd.Series(list(values), dtype="object")
+    text = raw.astype(str).str.strip()
+    aware = text.str.contains(_TZ_SUFFIX, regex=True, na=False) | raw.map(
+        lambda v: getattr(v, "tzinfo", None) is not None
+    )
+    out = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+    if (~aware).any():
+        naive = pd.to_datetime(raw[~aware], errors="coerce", format="mixed")
+        out[~aware] = pd.DatetimeIndex(naive).tz_localize(None) if getattr(naive.dt, "tz", None) else naive
+    if aware.any():
+        parsed = pd.to_datetime(raw[aware], errors="coerce", utc=True, format="mixed")
+        out[aware] = parsed.dt.tz_convert(timezone or "UTC").dt.tz_localize(None)
+    return pd.DatetimeIndex(out)
 
 
 def _numeric(values: List[Any]) -> np.ndarray:
     return pd.to_numeric(pd.Series(values, dtype="object"), errors="coerce").to_numpy(dtype=float)
 
 
-def climate_frame(payloads: Mapping[str, Mapping[str, Any]]) -> Optional[pd.DataFrame]:
+def climate_frame(payloads: Mapping[str, Mapping[str, Any]], timezone: Optional[str] = None) -> Optional[pd.DataFrame]:
     """Combine ``{param: {"timestamps": [...], "values": [...]}}`` payloads."""
     frames = []
     for name, payload in (payloads or {}).items():
@@ -49,7 +76,7 @@ def climate_frame(payloads: Mapping[str, Mapping[str, Any]]) -> Optional[pd.Data
         n = min(len(stamps), len(values))
         if n == 0:
             continue
-        series = pd.Series(_numeric(values[:n]), index=to_datetime_index(stamps[:n]), name=canonical_name(name))
+        series = pd.Series(_numeric(values[:n]), index=to_datetime_index(stamps[:n], timezone), name=canonical_name(name))
         series = series[~series.index.isna()]
         series = series[~series.index.duplicated(keep="first")].sort_index()
         frames.append(series)
@@ -63,6 +90,7 @@ def room_frame(
     timeseries: Mapping[str, List[Any]],
     timestamps: List[Any],
     climate: Optional[pd.DataFrame] = None,
+    timezone: Optional[str] = None,
 ) -> Tuple[Optional[pd.DataFrame], List[str]]:
     """
     Return ``(df, warnings)`` with canonical column names and a DatetimeIndex.
@@ -98,7 +126,7 @@ def room_frame(
                 )
         if not columns:
             return None, warnings
-        df = pd.DataFrame(columns, index=to_datetime_index(timestamps))
+        df = pd.DataFrame(columns, index=to_datetime_index(timestamps, timezone))
         bad = int(df.index.isna().sum())
         if bad:
             warnings.append(f"{bad} unparseable timestamps dropped.")

@@ -21,7 +21,7 @@ CATEGORY_COLORS = {
     "IV": "var(--cat-4)",
     "none": "var(--cat-none)",
 }
-CATEGORY_LABELS = {"I": "Cat I", "II": "Cat II", "III": "Cat III", "IV": "Cat IV", "none": "Below IV / n.a."}
+CATEGORY_LABELS = {"I": "Cat I", "II": "Cat II", "III": "Cat III", "IV": "Cat IV", "none": "Not rated"}
 
 
 def stacked_bar(

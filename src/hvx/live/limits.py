@@ -93,13 +93,14 @@ def classify(value: float, bounds: Optional[Bounds]) -> str:
 
 
 def category_now(values: Dict[str, float], limits: CategoryLimits) -> Optional[str]:
-    """Best category whose limits all current values satisfy (None = below IV)."""
+    """Best category whose limits all current values satisfy; "IV" when outside Category III
+    (EN 16798-1 Category IV has no limits of its own). None without values."""
     if not values:
         return None
-    for cat in CATEGORIES:
+    for cat in ("I", "II", "III"):
         if all(classify(v, limits.bounds(cat, p)) == "ok" for p, v in values.items() if limits.bounds(cat, p)):
             return cat
-    return None
+    return "IV"
 
 
 __all__ = ["CategoryLimits", "en16798_limits", "with_requirements", "classify", "category_now", "CATEGORIES"]

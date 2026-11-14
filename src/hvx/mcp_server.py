@@ -118,7 +118,7 @@ def _room_summary(r) -> Dict[str, Any]:
         "room": r.room_name,
         "building": r.building_name,
         "status": r.status,
-        "category": r.achieved_category or ("below IV" if r.below_category_iv else None),
+        "category": r.achieved_category,
         "ieq_score": r.ieq_score,
         "tail": (r.tail or {}).get("overall"),
         "br18_pass": r.br18_pass,

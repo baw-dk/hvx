@@ -82,3 +82,6 @@ reports/
 tmp/
 temp/
 *.tmp
+
+# Agent worktrees
+.claude/worktrees/

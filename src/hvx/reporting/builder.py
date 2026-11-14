@@ -107,8 +107,10 @@ class ReportBuilder:
         floor = floors.get(room.floor_id or "")
         climate: Dict[str, dict] = {}
         holiday_periods: list = []
+        timezone = None
         for source in (portfolio, building):
             meta = getattr(source, "metadata", None) or {}
+            timezone = meta.get("timezone") or timezone
             for key in ("climate_data", "climate_timeseries"):
                 if isinstance(meta.get(key), dict):
                     climate.update(meta[key])
@@ -124,6 +126,7 @@ class ReportBuilder:
             building_type=building.building_type if building else None,
             climate=climate,
             holiday_periods=holiday_periods,
+            timezone=timezone,
         )
 
     def _run(self, tasks: List[RoomTask]) -> List[RoomReport]:

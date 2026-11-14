@@ -35,6 +35,15 @@ required_inputs:
   humidity: false  # Optional
   outdoor_temperature: false  # For adaptive comfort
 
+# Category decision: a parameter reaches a category when it is within the category's
+# limits for at least `pass_share` % of measured occupied samples (EN 16798-1 /
+# CEN/TR 16798-2 long-term evaluation, ~5 % deviation); the room takes its worst
+# parameter. Category IV is everything outside Category III (its rules below are not
+# used for the decision). Relative humidity counts only in rooms whose metadata has
+# humidity_controlled: true. tolerance_percentage values below are informational.
+assessment:
+  pass_share: 95
+
 # Rules for each category
 # TODO: remove the rules as they are defined in the code analysis.py.
 rulesets:
