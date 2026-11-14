@@ -10,6 +10,7 @@
     --accent: #1d4ed8; --cat-1: #15803d; --cat-2: #65a30d; --cat-3: #d97706; --cat-4: #dc2626; --cat-none: #9ca3af;
     --lvl-1-bg: #dcfce7; --lvl-2-bg: #ecfccb; --lvl-3-bg: #fef3c7; --lvl-4-bg: #fee2e2; --meter-bg: #e5e7eb;
   }
+  {% if brand and brand.accent %}:root { --accent: {{ brand.accent }}; --brand: {{ brand.accent }}; }{% endif %}
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1115; --surface: #171a21; --text: #e8eaed; --muted: #9aa3ae; --border: #2a2f39;
@@ -23,6 +24,14 @@
   h2 { font-size: 19px; margin: 40px 0 12px; }
   h3 { font-size: 15px; margin: 0 0 6px; }
   .muted { color: var(--muted); }
+  {% if brand %}
+  .report-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .brand-logo { max-height: 44px; max-width: 180px; object-fit: contain; }
+  .brand-wordmark { font-weight: 750; font-size: 20px; letter-spacing: .02em; color: var(--brand, var(--accent)); white-space: nowrap; }
+  .brand-bar { height: 4px; border-radius: 2px; background: var(--brand, var(--accent)); margin-bottom: 18px; }
+  .imprint { margin-top: 40px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .imprint strong { color: var(--text); }
+  {% endif %}
   .small { font-size: 12.5px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 20px; }
@@ -60,6 +69,16 @@
   .filter { width: 100%; max-width: 320px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); margin-bottom: 10px; }
   footer { margin-top: 48px; color: var(--muted); font-size: 12px; }
   .intro p { margin: 0 0 10px; max-width: 75ch; }
+  svg.tail { display: block; max-width: 100%; height: auto; }
+  .tail-tree-fig { margin: 0 0 6px; }
+  .tail-tree-fig figcaption { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .tail-badge { display: inline-block; min-width: 30px; text-align: center; padding: 1px 8px; border-radius: 999px; font-weight: 650; font-size: 12px; white-space: nowrap; }
+  table.tail-matrix { margin-top: 14px; }
+  table.tail-matrix td.c, table.tail-matrix th.c { text-align: center; }
+  .tail-spread { display: flex; width: 74px; height: 5px; margin: 5px auto 0; border-radius: 3px; overflow: hidden; gap: 1px; background: var(--surface); }
+  .tail-spread i { display: block; height: 100%; }
+  table.tail-matrix tr.total td { font-weight: 650; border-bottom: 2px solid var(--border); }
+  .room-tail { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 4px; font-size: 12.5px; color: var(--muted); }
   .heat { border-collapse: separate; border-spacing: 2px; font-size: 11.5px; }
   .heat th { text-transform: none; letter-spacing: 0; text-align: center; padding: 2px 4px; font-size: 11px; }
   .heat th.rowh { text-align: left; white-space: nowrap; font-weight: 500; color: var(--text); }
@@ -95,6 +114,8 @@
 <body>
 <main>
 <header>
+  {% if brand %}<div class="brand-bar"></div>{% endif %}
+  <div class="report-head"><div>
   <div class="muted small">{{ _("Indoor environmental quality report") }}</div>
   <h1>{{ report.portfolio_name }}</h1>
   <div class="muted">
@@ -103,6 +124,11 @@
     {% set occ = (report.rooms | selectattr("occupancy") | map(attribute="occupancy") | unique | list) %}
     {% if occ | length == 1 %}· {{ _("Assessed: {hours}", hours=occ[0]) }}{% endif %}
     · {{ _("Generated {date}", date=(report.generated_at | date)) }}
+  </div>
+  </div>
+  {% if brand %}
+  <div class="brand">{% if brand.logo %}<img class="brand-logo" src="{{ brand.logo }}" alt="{{ brand.legal_name or brand.name }}">{% else %}<span class="brand-wordmark">{{ brand.name }}</span>{% endif %}</div>
+  {% endif %}
   </div>
 </header>
 
@@ -159,6 +185,35 @@
     <p class="muted small">{{ _("Each bar counts rooms by composite score (0 = never within limits, 100 = always).") }}</p>
   </div>
 </div>
+
+{% if s.tail %}
+<h2>{{ _("TAIL rating") }}</h2>
+<div class="card">
+  <figure class="tail-tree-fig">
+    <figcaption><strong>{{ _("Typical room") }}</strong> · {{ report.portfolio_name }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
+    {{ tail_tree(s.tail) }}
+  </figure>
+  {% set tail_buildings = report.buildings | selectattr("summary.tail") | list %}
+  {% if tail_buildings | length > 1 %}
+  <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the typical room. Bars below: how the rooms are spread over I–IV.") }}</p>
+  <div class="scroll">
+  <table class="tail-matrix">
+    <thead><tr><th>{{ _("Building") }}</th><th class="num">{{ _("Rooms") }}</th><th class="c">{{ _("Overall") }}</th>
+      {% for key, name in tail_domains %}<th class="c">{{ name }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr class="total"><td>{{ report.portfolio_name }}</td><td class="num">{{ s.tail.get("rooms", 0) }}</td><td class="c">{{ tail_badge(s.tail.overall) }}{{ tail_spread((s.tail.distribution or {}).get("overall")) }}</td>
+        {% for key, name in tail_domains %}<td class="c">{{ tail_badge((s.tail.domains or {}).get(key)) }}{{ tail_spread((s.tail.distribution or {}).get(key)) }}</td>{% endfor %}</tr>
+      {% for b in tail_buildings %}
+      <tr><td>{{ b.building_name }}</td><td class="num">{{ b.summary.tail.get("rooms", 0) }}</td><td class="c">{{ tail_badge(b.summary.tail.overall) }}{{ tail_spread((b.summary.tail.distribution or {}).get("overall")) }}</td>
+        {% for key, name in tail_domains %}<td class="c">{{ tail_badge((b.summary.tail.domains or {}).get(key)) }}{{ tail_spread((b.summary.tail.distribution or {}).get(key)) }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read the tree from left to right: each domain takes its worst parameter and the overall rating its worst domain. For a group of rooms each parameter shows the typical room (rounded mean of the rooms' ratings). Grey, dashed: not measured, so the domain is not rated.") }}</p>
+</div>
+{% endif %}
 
 {% if report.actions %}
 <h2>{{ _("Priority actions") }}</h2>
@@ -269,10 +324,11 @@
     <div>
       {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="{{ _('Below Category IV') }}">&lt;IV</span>{% else %}<span class="cat cat-none">–</span>{% endif %}
       <span class="pill {{ r.ieq_score | level }}">{{ _("Score") }} {{ r.ieq_score | num }}</span>
-      {% if r.tail_rating %}<span class="pill">TAIL {{ r.tail_rating }}</span>{% endif %}
       {% if r.br18_pass is not none %}<span class="pill" title="{{ r.br18_failed | map('translate') | join('; ') }}">BR18 {{ _("pass") if r.br18_pass else _("fail") }}</span>{% endif %}
     </div>
   </header>
+  {% if r.tail %}<div class="room-tail">TAIL {{ tail_badge(r.tail.overall, _("Overall")) }}
+    {% for key, name in tail_domains %}{{ tail_badge((r.tail.domains or {}).get(key), name) }}{% endfor %}</div>{% endif %}
   {% if r.issues %}<ul class="issues">{% for i in r.issues %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
   {% if r.parameters %}
   <div class="scroll">
@@ -386,6 +442,13 @@
     <li>{{ _("<strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.") | safe }}</li>
   </ul>
 </div>
+
+{% if brand %}
+<section class="imprint">
+  {{ _("Report prepared by") }} <strong>{{ brand.legal_name or brand.name }}</strong>{% if brand.cvr %} · {{ _("CVR no. {cvr}", cvr=brand.cvr) }}{% endif %}
+  {% for item in [brand.address, brand.email, brand.phone, brand.website] if item %} · {{ item }}{% endfor %}
+</section>
+{% endif %}
 
 <footer>
   {{ report.schema_version }} · {{ report.rooms | length }} {{ _("rooms") }} · {{ _("built in {s} s", s=(report.duration_s | num(1))) }}

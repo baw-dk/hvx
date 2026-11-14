@@ -120,7 +120,11 @@ def load_climify_folder(
     country: str = "DK",
     timezone: str = "Europe/Copenhagen",
     pattern: str = "*.csv",
+    parameters: Optional[Iterable[str]] = None,
 ) -> ClimifyLoadResult:
+    """``parameters`` limits what is loaded, e.g. ``("temperature", "co2", "humidity")``
+    to leave out light readings that do not represent the work plane."""
+    keep = set(parameters) if parameters is not None else None
     specs = sorted(buildings, key=lambda b: len(b.prefix), reverse=True)  # longest prefix wins
     portfolio = Portfolio(id=slug(portfolio_name), name=portfolio_name, type=SpatialEntityType.PORTFOLIO, country=country)
     out_buildings: Dict[str, Building] = {}
@@ -172,7 +176,7 @@ def load_climify_folder(
             metadata={"source_file": path.name},
         )
         room.timestamps = [t.isoformat() for t in df.index]
-        room.timeseries_data = {c: df[c].astype(float).tolist() for c in df.columns}
+        room.timeseries_data = {c: df[c].astype(float).tolist() for c in df.columns if keep is None or c in keep}
         rooms[rid] = room
         (floor or building).add_room(rid)
         if floor:

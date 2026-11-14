@@ -73,11 +73,48 @@ def summarize(rooms: Sequence[RoomReport], config: ReportConfig) -> GroupSummary
                 if v is not None:
                     buckets.setdefault(int(k), []).append(v)
         s.profiles[name] = {k: round(sum(v) / len(v), 1) for k, v in sorted(buckets.items())}
+    s.tail = typical_tail([r.tail for r in analysed if r.tail])
     keys = sorted({k for r in analysed for k in r.exceedance_hours})
     for key in keys:
         values = [r.exceedance_hours[key] for r in analysed if key in r.exceedance_hours]
         s.exceedance_hours[key] = round(sum(values) / len(values), 1)
     return s
+
+
+TAIL_DOMAIN_OF = {
+    "temperature": "thermal", "noise": "acoustic", "illuminance": "luminous", "lux": "luminous", "daylight_factor": "luminous",
+}
+
+
+def typical_tail(rooms: Sequence[Dict]) -> Dict:
+    """
+    TAIL for a group of rooms: each parameter gets the rounded mean of the rooms'
+    ratings (the typical room); domains and overall then follow the TAIL rule
+    (worst parameter, worst domain). Using the worst room instead would make
+    almost every building IV and hide where most rooms stand.
+    """
+    if not rooms:
+        return {}
+    values: Dict[str, List[int]] = {}
+    for tail in rooms:
+        for p, label in (tail.get("parameters") or {}).items():
+            if label in CATEGORIES:
+                values.setdefault(p, []).append(CATEGORIES.index(label) + 1)
+    params = {p: CATEGORIES[min(3, max(0, int(sum(v) / len(v) + 0.5) - 1))] for p, v in values.items()}
+    domains: Dict[str, str] = {}
+    for p, label in params.items():
+        d = TAIL_DOMAIN_OF.get(p, "iaq")
+        if d not in domains or CATEGORIES.index(label) > CATEGORIES.index(domains[d]):
+            domains[d] = label
+    overall = max(domains.values(), key=CATEGORIES.index) if domains else None
+    # How the rooms themselves are rated, per domain and overall: {"thermal": {"I": 3, "IV": 9}, ...}
+    distribution: Dict[str, Dict[str, int]] = {}
+    for tail in rooms:
+        for key, label in [*(tail.get("domains") or {}).items(), ("overall", tail.get("overall"))]:
+            if label in CATEGORIES:
+                counts = distribution.setdefault(key, {})
+                counts[label] = counts.get(label, 0) + 1
+    return {"overall": overall, "domains": domains, "parameters": params, "rooms": len(rooms), "distribution": distribution}
 
 
 def worst_rooms(rooms: Iterable[RoomReport], limit: int) -> List[str]:

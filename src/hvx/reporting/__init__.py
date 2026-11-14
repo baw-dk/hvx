@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Optional, Union
 
+from .branding import ReportBranding, available_brands, load_brand
 from .builder import ReportBuilder, build_report
 from .config import ReportConfig
 from .model import (
@@ -65,6 +66,9 @@ __all__ = [
     "SeasonResult",
     "ActionItem",
     "SCHEMA_VERSION",
+    "ReportBranding",
+    "available_brands",
+    "load_brand",
     "MEDIA_TYPES",
     "build_report",
     "generate_report",

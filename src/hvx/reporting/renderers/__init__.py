@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Dict, Union
 
 from ..model import PortfolioReport
-from .html import render_html, write_html
+from .html import CONFIG_BRAND, render_html, write_html
 from .tabular import render_csv, render_json, report_to_dict, room_rows, write_csv, write_json
 
 RENDERERS: Dict[str, Callable[[PortfolioReport], str]] = {
@@ -26,23 +26,25 @@ MEDIA_TYPES = {
 }
 
 
-def render(report: PortfolioReport, fmt: str = "html"):
-    """Text for html/json/csv; bytes for pdf."""
+def render(report: PortfolioReport, fmt: str = "html", brand=CONFIG_BRAND):
+    """Text for html/json/csv; bytes for pdf. ``brand`` overrides the config's branding (html/pdf)."""
     if fmt.lower() == "pdf":
         from .pdf import render_pdf
 
-        return render_pdf(report)
+        return render_pdf(report, brand=brand)
+    if fmt.lower() == "html":
+        return render_html(report, brand)
     try:
         return RENDERERS[fmt.lower()](report)
     except KeyError as exc:
         raise ValueError(f"Unknown report format {fmt!r}; expected one of {sorted(RENDERERS)}") from exc
 
 
-def write(report: PortfolioReport, path: Union[str, Path], fmt: str | None = None) -> Path:
+def write(report: PortfolioReport, path: Union[str, Path], fmt: str | None = None, brand=CONFIG_BRAND) -> Path:
     path = Path(path)
     fmt = (fmt or path.suffix.lstrip(".") or "html").lower()
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = render(report, fmt)
+    content = render(report, fmt, brand)
     if isinstance(content, bytes):
         path.write_bytes(content)
     else:

@@ -53,6 +53,9 @@ class ReportConfig:
     language: str = "en"  # "en" or "da": report texts, numbers and dates
     introduction: Optional[str] = None  # shown under the title; blank lines separate paragraphs
     notes: Tuple[str, ...] = ()  # extra method/data notes shown in the method section
+    # None: white-label (no company details). A built-in brand name ("baw") or a brand YAML path:
+    # logo, accent colour and company details incl. CVR number (see reporting.branding).
+    branding: Optional[str] = None
     seasons: Tuple[str, ...] = ("winter",)
     target_category: str = "II"
     default_country: str = "DK"
@@ -92,6 +95,11 @@ class ReportConfig:
 
         if self.language not in LANGUAGES:
             raise ValueError(f"language must be one of {LANGUAGES}")
+        if self.branding is not None:
+            from .branding import load_brand
+
+            self.branding = str(self.branding)
+            load_brand(self.branding)  # fail early on unknown brands or missing company details
         if self.parallel_backend not in ("auto", "serial", "thread", "process"):
             raise ValueError("parallel_backend must be auto, serial, thread or process")
         if not 0 < self.group_category_threshold <= 1:

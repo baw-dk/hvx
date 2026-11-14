@@ -40,6 +40,7 @@ class SeasonResult:
     period_start: Optional[str] = None
     period_end: Optional[str] = None
     tail_rating: Optional[str] = None
+    tail: Dict[str, Any] = field(default_factory=dict)  # {"domains": {...}, "parameters": {...}} labels I–IV
     br18_pass: Optional[bool] = None
     br18_failed: List[str] = field(default_factory=list)
 
@@ -68,6 +69,7 @@ class RoomReport:
     parameters: Dict[str, ParameterSummary] = field(default_factory=dict)
     seasons: List[SeasonResult] = field(default_factory=list)
     tail_rating: Optional[str] = None
+    tail: Dict[str, Any] = field(default_factory=dict)  # TAIL overall/domains/parameters, worst across seasons
     br18_pass: Optional[bool] = None
     br18_failed: List[str] = field(default_factory=list)  # names of BR18 rules not met
     below_category_iv: bool = False  # assessed, but below EN 16798 Category IV
@@ -113,6 +115,7 @@ class GroupSummary:
     ieq_score: Optional[float] = None
     compliance: Dict[str, Optional[float]] = field(default_factory=dict)
     exceedance_hours: Dict[str, float] = field(default_factory=dict)  # mean per analysed room
+    tail: Dict[str, Any] = field(default_factory=dict)  # typical TAIL rating of the rooms (see aggregate)
     profiles: Dict[str, Dict[int, float]] = field(default_factory=dict)  # mean of room profiles
     score_histogram: List[int] = field(default_factory=lambda: [0] * 10)
 

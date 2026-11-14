@@ -77,22 +77,28 @@ def cli(verbose: int) -> None:
 @click.option("--target", "target_category", type=click.Choice(["I", "II", "III", "IV"]), default="II", show_default=True)
 @click.option("--title", default=None)
 @click.option("--lang", "language", type=click.Choice(["en", "da"]), default="en", show_default=True, help="Report language.")
+@click.option("--brand", "branding", default=None,
+              help="Report branding: a built-in brand (e.g. baw) or a brand YAML file. Default: white-label.")
 @click.option("--workers", type=int, default=None, help="Parallel workers (default: auto).")
 @click.option("--no-simulations", is_flag=True, help="Skip ventilation/correlation/scenario models (faster).")
-def report(site_path, csv_path, output, days, interval, seasons, target_category, title, language, workers, no_simulations) -> None:
+def report(site_path, csv_path, output, days, interval, seasons, target_category, title, language, branding, workers, no_simulations) -> None:
     """Build an IEQ report."""
     from hvx.reporting import ReportBuilder, ReportConfig, write
 
     if bool(site_path) == bool(csv_path):
         raise click.UsageError("Give exactly one of --site or --csv.")
-    config = ReportConfig(
-        title=title,
-        language=language,
-        seasons=tuple(seasons) or ("winter",),
-        target_category=target_category,
-        max_workers=workers,
-        include_simulations=not no_simulations,
-    )
+    try:
+        config = ReportConfig(
+            title=title,
+            language=language,
+            branding=branding,
+            seasons=tuple(seasons) or ("winter",),
+            target_category=target_category,
+            max_workers=workers,
+            include_simulations=not no_simulations,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--brand/--lang/--season") from exc
     if site_path:
         site = _load_site(site_path)
         monitor = _monitor(site, days, interval, config)

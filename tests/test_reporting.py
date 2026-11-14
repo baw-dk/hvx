@@ -321,3 +321,116 @@ def test_pdf_output(portfolio, tmp_path):
     except Exception as exc:  # no browser in this environment
         pytest.skip(f"Chromium not available: {exc}")
     assert pdf.startswith(b"%PDF") and len(pdf) > 10_000
+
+
+def test_tail_diagram():
+    from hvx.reporting.aggregate import typical_tail
+    from hvx.reporting.charts import TAIL_COLORS, tail_sunburst
+
+    tail = {"overall": "III", "domains": {"thermal": "III", "iaq": "II"},
+            "parameters": {"temperature": "III", "co2": "II", "relative_humidity": "I"}}
+    svg = tail_sunburst(tail, size=260, language="da")
+    assert svg.count("<path") >= 4 + 12  # 4 domains + 12 parameter segments (+ label arcs)
+    assert TAIL_COLORS["III"] in svg and TAIL_COLORS[None] in svg  # rated and not-measured segments
+    assert "Temperatur" in svg and "textPath" in svg and ">III<" in svg
+    assert "Termisk III" in svg and "Luftkvalitet II" in svg and "SAMLET" in svg  # Danish domain names
+    assert "Thermal III" in tail_sunburst(tail, language="en")
+    a, b = tail_sunburst(tail), tail_sunburst(tail)
+    assert a.split('id="')[1][:13] != b.split('id="')[1][:13]  # unique ids per chart
+    group = typical_tail([tail, {"overall": "I", "domains": {"thermal": "I"}, "parameters": {"temperature": "I", "co2": "I"}}])
+    assert group["parameters"] == {"temperature": "II", "co2": "II", "relative_humidity": "I"}  # rounded means
+    assert group["domains"] == {"thermal": "II", "iaq": "II"} and group["overall"] == "II" and group["rooms"] == 2
+
+
+BRAND_YAML = """
+name: Example
+legal_name: Example Rådgivning ApS
+cvr: "1234 5678"
+address: Testvej 1, 9999 Testby
+email: kontakt@example.com
+logo: logo.svg
+accent: "#0b5c4a"
+required: [legal_name, cvr]
+"""
+
+
+@pytest.fixture
+def brand_file(tmp_path):
+    (tmp_path / "logo.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>', encoding="utf-8")
+    path = tmp_path / "example.yaml"
+    path.write_text(BRAND_YAML, encoding="utf-8")
+    return path
+
+
+def test_white_label_by_default(portfolio):
+    html = render(ReportBuilder(ReportConfig(**FAST)).build(*portfolio), "html")
+    for marker in ("Report prepared by", "CVR", "imprint", "brand"):
+        assert marker not in html, marker
+
+
+def test_branded_report(portfolio, brand_file):
+    from hvx.reporting import load_brand
+    from hvx.reporting.i18n import Translator
+    from hvx.reporting.renderers.pdf import _footer
+
+    report = ReportBuilder(ReportConfig(language="da", branding=str(brand_file), **FAST)).build(*portfolio)
+    html = render(report, "html")
+    assert "Rapport udarbejdet af <strong>Example Rådgivning ApS</strong> · CVR-nr. 12345678" in html
+    assert "Testvej 1, 9999 Testby" in html and "kontakt@example.com" in html
+    assert 'src="data:image/svg+xml;base64,' in html and "--accent: #0b5c4a" in html
+    assert report.config["branding"] == str(brand_file)
+    # The same report, white-labelled at render time.
+    assert "CVR" not in render(report, "html", brand=None)
+    footer = _footer(report, Translator("da"), load_brand(brand_file))
+    assert "Example Rådgivning ApS · CVR-nr. 12345678" in footer and "Side" in footer
+    assert "CVR" not in _footer(report, Translator("da"), None)
+
+
+def test_brand_validation(tmp_path, brand_file):
+    from hvx.reporting import available_brands, load_brand
+
+    assert "baw" in available_brands()
+    for name in ("white_label", "none", ""):
+        assert load_brand(name) is None
+    blank = tmp_path / "blank.yaml"
+    blank.write_text("name: Blank\ncvr: ''\nrequired: [cvr]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing required field"):
+        ReportConfig(branding=str(blank))
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("name: Bad\ncvr: '1234'\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="8 digits"):
+        load_brand(bad)
+    with pytest.raises(ValueError, match="Unknown brand"):
+        ReportConfig(branding="no-such-brand")
+
+
+def test_builtin_brand_files_parse():
+    """Every shipped brand file has only known fields (details may still be blank)."""
+    import yaml
+
+    from hvx.reporting.branding import BRANDS_DIR, ReportBranding
+
+    for path in BRANDS_DIR.glob("*.yaml"):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert set(data) <= set(ReportBranding.__dataclass_fields__), path.name
+        assert data["name"]
+
+
+def test_tail_tree():
+    from hvx.reporting.charts import TAIL_COLORS, tail_tree
+
+    tail = {"overall": "IV", "domains": {"thermal": "IV", "iaq": "II"},
+            "parameters": {"temperature": "IV", "co2": "II", "humidity": "I"}}
+    svg = tail_tree(tail, language="da", na="ikke målt")
+    assert svg.startswith("<svg") and svg.count("<svg") == 1
+    for text in ("SAMLET", "T · Termisk", "I · Luftkvalitet", "Temperatur", "CO₂", "RF", "Støj"):
+        assert text in svg, text
+    assert "Ikke målt: Dagslys, Lux" in svg  # unmeasured parameters collapse into one node per domain
+    assert "Ikke målt: Benzen" in svg and "+" in svg and "<title>Benzen, CH₂O" in svg
+    assert TAIL_COLORS["IV"] in svg and TAIL_COLORS[None] in svg
+    assert svg.count("<path") == 4 + 6  # overall->4 domains; leaves: temperature, noise, CO2, RH, IAQ unmeasured, light unmeasured
+
+
+def test_tail_section_in_report(portfolio):
+    html = render(ReportBuilder(ReportConfig(language="da", **FAST)).build(*portfolio), "html")
+    assert "tail-tree" in html and "Typisk lokale" in html and 'class="tail-badge"' in html
