@@ -16,7 +16,7 @@
     "reactflow": "^11.11.4",
     "lucide-react": "^0.454.0",
     "papaparse": "^5.4.1",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.2"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
