@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-14
+
 ### Fixed
 Found by an audit against EN 16798-1, BR18, the TAIL reference implementation and the
 tracer-gas decay literature, with synthetic data of known answer and real school data.
