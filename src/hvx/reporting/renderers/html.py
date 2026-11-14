@@ -113,6 +113,9 @@ def _environment(report: PortfolioReport) -> Environment:
         meter=lambda v, **kw: Markup(charts.meter(v, **kw)),
         tail_chart=lambda tail, size=220: Markup(charts.tail_sunburst(tail, size=size, language=t.language, title="TAIL", na=t("not measured"))),
         tail_tree=lambda tail: Markup(charts.tail_tree(tail, language=t.language, na=t("not measured"))),
+        tail_network=lambda portfolio, buildings, title="": Markup(charts.tail_network(
+            portfolio, [(b.building_name, b.summary.tail) for b in buildings], language=t.language, title=title,
+            rooms_label=t("{n} rooms"))),
         tail_badge=_tail_badge,
         tail_spread=lambda counts: _tail_spread(counts, t),
         tail_domains=[(k, charts.TAIL_DOMAIN_LABELS.get(t.language, charts.TAIL_DOMAIN_LABELS["en"])[k]) for k in charts.TAIL_ORDER],

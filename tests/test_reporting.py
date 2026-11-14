@@ -463,3 +463,16 @@ def test_tail_donut_collapses_unmeasured_parameters():
     # air quality: CO2, RH and one grey segment (not eight slivers); acoustic and light: one grey segment each
     assert svg.count("<path d=") == 4 + 1 + 1 + 3 + 1  # 4 domain sectors + T, A, I(3), L outer segments
     assert "Ikke målt: Benzen, CH₂O, PM2.5, Radon, Vent., Skimmel" in svg
+
+
+def test_portfolio_network_and_building_pages():
+    from hvx.reporting.charts import tail_network
+
+    svg = tail_network({"overall": "III"}, [("North", {"overall": "II", "domains": {"thermal": "II"}, "rooms": 4}),
+                                            ("South", {"overall": "III", "domains": {"iaq": "III"}, "rooms": 2})],
+                       rooms_label="{n} rooms")
+    assert svg.count('stroke-linecap="round"/>') == 2  # one link per building
+    assert "North" in svg and "4 rooms" in svg and "T II" in svg and "I III" in svg and "A –" in svg
+    p, b, f, r = make_portfolio(n_buildings=2, n_rooms=2)
+    html = render(ReportBuilder(ReportConfig(**FAST)).build(p, b, f, r), "html")
+    assert "tail-network" in html and html.count('class="building-page') == 2
