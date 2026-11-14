@@ -8,6 +8,7 @@
     hvx brick export --site site.yaml -o model.ttl           # Brick 1.4 model
     hvx check  --site site.yaml                              # validate config + source connectivity
     hvx serve                                                # FastAPI backend (extra: api)
+    hvx chirpstack listen --host chirpstack.local            # discover LoRaWAN devices and fields
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ def _monitor(site, days: float, interval: str, config=None):
 
     try:
         sources = site.build_sources()
+        for source in sources.values():
+            source.start()  # MQTT and other streaming sources connect here
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
     return LiveMonitor(
@@ -219,6 +222,47 @@ def brick_export(site_path, output) -> None:
     except ImportError as exc:
         raise click.ClickException(f"{exc}  →  pip install 'hvx[brick]'") from exc
     click.echo(f"Wrote {output}")
+
+
+@cli.group()
+def chirpstack() -> None:
+    """ChirpStack (LoRaWAN) helpers."""
+
+
+@chirpstack.command("listen")
+@click.option("--host", default="localhost", show_default=True, help="MQTT broker used by ChirpStack.")
+@click.option("--port", default=1883, show_default=True)
+@click.option("--application-id", default="+", show_default=True)
+@click.option("--username", default=None)
+@click.option("--password-env", default="CHIRPSTACK_MQTT_PASSWORD", show_default=True)
+@click.option("--tls", is_flag=True)
+@click.option("--seconds", default=120, show_default=True, help="How long to listen.")
+def chirpstack_listen(host, port, application_id, username, password_env, tls, seconds) -> None:
+    """Listen to uplinks and print devices, fields and site-file snippets."""
+    import os
+
+    from hvx.live.chirpstack import ChirpStackMQTTSource, canonical_field
+
+    source = ChirpStackMQTTSource(host, port, application_id, username, os.environ.get(password_env), tls)
+    try:
+        source.start()
+    except Exception as exc:
+        raise click.ClickException(f"Cannot connect to MQTT {host}:{port}: {exc}") from exc
+    click.echo(f"Listening on {source.topic} for {seconds}s…", err=True)
+    try:
+        time.sleep(seconds)
+    finally:
+        source.close()
+    if not source.devices:
+        click.echo("No uplinks received. Check the topic/application id and that devices are sending.")
+        return
+    for dev_eui, info in sorted(source.devices.items()):
+        fields = info.get("fields") or []
+        known = sorted({canonical_field(f) for f in fields if canonical_field(f)})
+        click.echo(f"\n{dev_eui}  {info.get('deviceName') or ''}  [{info.get('deviceProfileName') or '?'}]  tags={info.get('tags') or {}}")
+        click.echo(f"  fields: {', '.join(fields)}")
+        click.echo(f"  recognised: {', '.join(known) or 'none'}")
+        click.echo(f"  site.yaml:  devices: [{{source: lorawan, dev_eui: {dev_eui}, parameters: [{', '.join(known)}]}}]")
 
 
 @cli.command()

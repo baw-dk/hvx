@@ -30,6 +30,25 @@ Site files: a small YAML description of a portfolio and its live points.
                   temperature: sensor.meeting_101_temperature
                   co2: sensor.meeting_101_co2
                   humidity: {point: sensor.meeting_101_humidity, source: default}
+
+LoRaWAN rooms through ChirpStack bind whole devices by DevEUI:
+
+.. code-block:: yaml
+
+    sources:
+      lorawan:
+        type: chirpstack-mqtt          # or chirpstack-api, chirpstack-http (webhook, API server only)
+        host: chirpstack.local
+        port: 1883
+        application_id: 4e1c...        # optional, default: all applications
+        username: hvx
+        password_env: CHIRPSTACK_MQTT_PASSWORD
+        backfill: {server: chirpstack.local:8080, token_env: CHIRPSTACK_API_TOKEN}
+    ...
+              rooms:
+                - id: r-102
+                  name: Office 1.02
+                  devices: [{source: lorawan, dev_eui: a84041000181c061}]
 """
 
 from __future__ import annotations
@@ -48,6 +67,8 @@ from hvx.core.semantics.ieq import IEQRequirements
 from .base import TimeSeriesSource
 from .bindings import DEFAULT_SOURCE, bind
 from .sources import HomeAssistantSource, InMemorySource
+
+DEVICE_PARAMETERS = ("temperature", "co2", "humidity")
 
 
 @dataclass
@@ -71,8 +92,37 @@ class Site:
         return sources
 
 
+def _secret(cfg: Mapping[str, Any], key: str, default_env: str) -> str:
+    return str(cfg.get(key) or os.environ.get(str(cfg.get(f"{key}_env", default_env)), ""))
+
+
 def build_source(cfg: Mapping[str, Any]) -> TimeSeriesSource:
     kind = str(cfg.get("type", "")).lower()
+    if kind.startswith("chirpstack"):
+        from .chirpstack import ChirpStackAPISource, ChirpStackMQTTSource
+
+        if kind == "chirpstack-api":
+            return ChirpStackAPISource(
+                server=str(cfg.get("server", "localhost:8080")),
+                token=_secret(cfg, "token", "CHIRPSTACK_API_TOKEN"),
+                tls=bool(cfg.get("tls", False)),
+                aggregation=str(cfg.get("aggregation", "HOUR")),
+            )
+        if kind == "chirpstack-mqtt":
+            backfill = cfg.get("backfill")
+            return ChirpStackMQTTSource(
+                host=str(cfg.get("host", "localhost")),
+                port=int(cfg.get("port", 1883)),
+                application_id=str(cfg.get("application_id", "+")),
+                username=cfg.get("username"),
+                password=_secret(cfg, "password", "CHIRPSTACK_MQTT_PASSWORD") or None,
+                tls=bool(cfg.get("tls", False)),
+                topic=cfg.get("topic"),
+                backfill=build_source({**backfill, "type": "chirpstack-api"}) if backfill else None,  # type: ignore[arg-type]
+            )
+        if kind == "chirpstack-http":
+            return InMemorySource()  # filled by POST /api/integrations/chirpstack
+        raise ValueError(f"Unknown ChirpStack source type {kind!r}")
     if kind == "homeassistant":
         token = cfg.get("token") or os.environ.get(str(cfg.get("token_env", "HA_TOKEN")), "")
         return HomeAssistantSource(
@@ -82,7 +132,9 @@ def build_source(cfg: Mapping[str, Any]) -> TimeSeriesSource:
         )
     if kind == "memory":
         return InMemorySource()
-    raise ValueError(f"Unknown source type {kind!r} (expected 'homeassistant' or 'memory')")
+    raise ValueError(
+        f"Unknown source type {kind!r} (expected homeassistant, memory, chirpstack-mqtt, chirpstack-api or chirpstack-http)"
+    )
 
 
 def _slug(text: str) -> str:
@@ -124,6 +176,13 @@ def load_site(source: Union[str, Path, Mapping[str, Any]]) -> Site:
             brick_class=spec.get("brick_class"),
             ieq_requirements=IEQRequirements(**req) if req else None,
         )
+        for device in spec.get("devices") or []:
+            from .chirpstack import device_points
+
+            dev = device if isinstance(device, Mapping) else {"dev_eui": device}
+            params = dev.get("parameters") or DEVICE_PARAMETERS
+            for parameter, point in device_points(str(dev["dev_eui"]), params).items():
+                bind(room, parameter, point, str(dev.get("source", DEFAULT_SOURCE)))
         for parameter, point in (spec.get("sensors") or {}).items():
             if isinstance(point, Mapping):
                 bind(room, parameter, str(point["point"]), str(point.get("source", DEFAULT_SOURCE)), point.get("unit"))

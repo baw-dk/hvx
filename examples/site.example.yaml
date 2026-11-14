@@ -9,6 +9,13 @@ sources:
     type: homeassistant
     url: http://homeassistant.local:8123
     token_env: HA_TOKEN        # export HA_TOKEN=<long-lived access token>; never put the token here
+  lorawan:
+    type: chirpstack-mqtt      # needs: pip install "hvx[chirpstack]"
+    host: chirpstack.local
+    port: 1883
+    username: hvx
+    password_env: CHIRPSTACK_MQTT_PASSWORD
+    backfill: {server: "chirpstack.local:8080", token_env: CHIRPSTACK_API_TOKEN}
 
 buildings:
   - id: hq
@@ -37,3 +44,9 @@ buildings:
             sensors:
               temperature: sensor.office_102_temperature
               co2: sensor.office_102_co2
+          - id: lab-103
+            name: Lab 1.03 (LoRaWAN)
+            room_type: laboratory
+            area_m2: 40
+            devices:                 # binds temperature, co2, humidity of the device
+              - {source: lorawan, dev_eui: a81758fffe0312aa}

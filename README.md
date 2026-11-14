@@ -18,6 +18,7 @@ Three ways to use it:
 ```bash
 pip install hvx                 # core: standards, reporting, live monitoring, CLI
 pip install "hvx[brick,ifc]"    # + Brick RDF and IFC import/write-back
+pip install "hvx[chirpstack]"   # + LoRaWAN sensors through ChirpStack
 pip install "hvx[api]"          # + FastAPI backend (hvx serve)
 pip install "hvx[all]"          # everything (incl. pythermalcomfort / numba)
 ```
@@ -41,6 +42,9 @@ file, a Brick/IFC import and the Home Assistant integration all bind the same wa
 |---|---|
 | `HomeAssistantSource` | pulls history and current states from Home Assistant's REST API (long-lived token) |
 | `InMemorySource` | you push readings (MQTT callbacks, webhooks, BMS exports); used by the HA integration |
+| `ChirpStackMQTTSource` | LoRaWAN sensors via ChirpStack's MQTT integration, with optional backfill from its gRPC API |
+| `ChirpStackAPISource` | ChirpStack device metrics (`DeviceService.GetMetrics`) for history |
+| ChirpStack HTTP integration | ChirpStack posts uplinks to `POST /api/integrations/chirpstack` on `hvx serve` |
 | your own | subclass `TimeSeriesSource` and implement `history(points, start, end)` |
 
 `LiveMonitor` keeps a bounded rolling window, fetches **incrementally** (only data
@@ -72,6 +76,35 @@ snapshot = monitor.snapshot()
 for room in snapshot.rooms.values():
     print(room.room_name, room.category_now, room.window.ieq_score, room.alerts)
 ```
+
+### LoRaWAN through ChirpStack
+
+`pip install "hvx[chirpstack]"`. ChirpStack decodes uplinks with each device's codec;
+every numeric field becomes a point `<devEui>/<field>`, and common IEQ fields from
+any vendor (`co2`, `TempC_SHT`, `Hum_SHT`, `humidity`, `light`, `tvoc`...) are also
+published as `<devEui>/temperature`, `/co2`, `/humidity`, so a room binds a whole device:
+
+```yaml
+sources:
+  lorawan:
+    type: chirpstack-mqtt                    # or chirpstack-api, or chirpstack-http (webhook)
+    host: chirpstack.local
+    username: hvx
+    password_env: CHIRPSTACK_MQTT_PASSWORD
+    backfill: {server: chirpstack.local:8080, token_env: CHIRPSTACK_API_TOKEN}
+...
+rooms:
+  - id: r-102
+    name: Office 1.02
+    devices: [{source: lorawan, dev_eui: a84041000181c061}]
+```
+
+`hvx chirpstack listen --host chirpstack.local` prints the devices and fields it
+receives, with ready-to-paste `devices:` lines. For the HTTP integration, run
+`hvx serve` with `HVX_WEBHOOK_TOKEN` set, load the site with `POST /api/live/site`,
+and point ChirpStack at `/api/integrations/chirpstack` with the header
+`Authorization: Bearer <token>` (JSON or Protobuf). `GET /api/live/snapshot` and
+`POST /api/live/report` then serve live status and reports.
 
 ## 🏠 Home Assistant integration
 

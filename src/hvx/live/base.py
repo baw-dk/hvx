@@ -93,6 +93,9 @@ class TimeSeriesSource(ABC):
                 out[point] = Reading(point, float(series.iloc[-1]), series.index[-1].to_pydatetime())
         return out
 
+    def start(self) -> "TimeSeriesSource":  # noqa: B027 - optional hook for streaming sources
+        return self
+
     def close(self) -> None:  # noqa: B027  # pragma: no cover - optional hook
         pass
 
