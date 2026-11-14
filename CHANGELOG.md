@@ -6,7 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `hvx.building_csv`: a building from one CSV per room. `labels()` rates every room and the
+  building (offices and hotels: TAIL paper Eq. 1, mean of the rooms' parameter ratings;
+  schools: mean of the classrooms' domain ratings, Tran 2024); `report()` builds the full hvx
+  report (HTML and JSON data) over the same assessed hours as the labels, with an outdoor
+  temperature column used as the building's climate data.
+- Advanced occupancy schedules (`OccupancySchedule`): `periods` gives hours per weekday and
+  several periods a day (breaks); `closed_days` single dates; overnight periods per day;
+  `from_dict`/`to_dict`, `day_groups()`, `weekly_hours()`. `danish_school_holidays(years)`
+  gives typical Danish school holidays to start from. `tail_label.assess(schedule=...)` takes
+  one; reports describe per-day hours (English and Danish).
+- TAIL web app: several rooms per building with a building label; each label as PNG or SVG,
+  or all as one ZIP; the full report (HTML, open or print as PDF) and an interactive
+  dashboard, both built in the browser; a schedule editor; layout following the BAW website.
+
 ### Changed
+- The rule that rates a group of rooms (`typical_tail`, `interim_label`) moved to
+  `hvx.standards.tail.aggregate` (no pandas, so it runs in the browser);
+  `hvx.reporting.aggregate` still exports it.
 - Dependency updates, consolidating the Dependabot pull requests:
   - GitHub Actions: `actions/setup-node` 7, `actions/upload-artifact` 7,
     `actions/download-artifact` 8, `actions/upload-pages-artifact` 5,
