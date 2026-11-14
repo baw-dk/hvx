@@ -1,0 +1,358 @@
+id: "tail"
+name: "TAIL Indoor Environmental Quality Rating"
+version: "2024.1"
+standard_type: "TAIL"
+description: "TAIL rating scheme (Wargocki et al. 2021) for indoor environmental quality across the Thermal, Acoustic, Indoor Air Quality and Luminous domains"
+
+# Rating-based standard (not category-based like EN16798)
+category_based: false
+
+# Source of every threshold below: the authors' reference R script `tail.R`
+# (github.com/asitkm76/TAILRatingScheme, commit c71b8b5) for
+# Wargocki et al. (2021), Energy & Buildings 244, 111029, doi:10.1016/j.enbuild.2021.111029.
+# "l.NN" = line in tail.R. This file is the single source of the TAIL thresholds:
+# hvx.standards.tail.calculator reads them from here.
+reference:
+  script: "tail.R"
+  repository: "https://github.com/asitkm76/TAILRatingScheme"
+  commit: "c71b8b5"
+  doi: "10.1016/j.enbuild.2021.111029"
+
+# TAIL rating scale (tail.R l.655-671). Parameter labels come from the
+# parameter rules below, not from a compliance percentage.
+ratings:
+  - id: "I"
+    value: 1
+    name: "Rating I"
+    description: "Green - high quality"
+    color: "green"
+
+  - id: "II"
+    value: 2
+    name: "Rating II"
+    description: "Yellow - medium quality"
+    color: "yellow"
+
+  - id: "III"
+    value: 3
+    name: "Rating III"
+    description: "Orange - moderate quality"
+    color: "orange"
+
+  - id: "IV"
+    value: 4
+    name: "Rating IV"
+    description: "Red - low quality"
+    color: "red"
+
+# TAIL domains. A domain takes its worst parameter and the overall rating its
+# worst domain (tail.R l.379, 554-556, 590, 640, 652-653); unmeasured parameters
+# are left out. Relative humidity belongs to Indoor Air (l.554).
+domains:
+  - id: "thermal"
+    name: "Thermal environment"
+    metrics: [temperature]
+  - id: "acoustic"
+    name: "Acoustic environment"
+    metrics: [noise]
+  - id: "iaq"
+    name: "Indoor air quality"
+    metrics: [co2, relative_humidity, benzene, formaldehyde, pm25, radon, ventilation, mold]
+  - id: "luminous"
+    name: "Luminous environment"
+    metrics: [illuminance, daylight_factor]
+
+# Applicability
+applicability:
+  countries: null  # Universal standard
+  regions: null
+  building_types: ["office", "school", "residential", "commercial"]
+  seasons: ["all_year"]
+
+# Required inputs (at least one from each domain for complete assessment)
+required_inputs:
+  thermal:
+    temperature: true
+    humidity: false
+  acoustic:
+    noise: false
+  iaq:
+    co2: true
+    pm25: false
+  luminous:
+    illuminance: false
+
+# Rule that turns the time shares of Green/Yellow/Orange/Red samples into a
+# label (temperature l.351-369, RH l.450-470). Shares are fractions of the
+# occupied samples that have a value.
+#
+# tail.R lists I: G >= 94 % & O <= 1 % & R = 0; II: Y > 5 % & O <= 5 % & R <= 1 %;
+# III: O > 5 % & R <= 5 %; otherwise IV. Read literally this has gaps: 99.5 % Green
+# + 0.5 % Red, or 93 % Green + 2 % Yellow + 5 % Orange, satisfy no condition and
+# fall to IV. hvx reads the rule cumulatively: the first level whose ceilings
+# hold. Every case tail.R rates I, II or III gets the same label; only the gap
+# cases change.
+time_share_rule:
+  I:   {green_min: 0.94, orange_max: 0.01, red_max: 0.0}
+  II:  {orange_max: 0.05, red_max: 0.01}
+  III: {red_max: 0.05}
+
+parameters:
+  # Bands are nested closed intervals [low, high]: a value takes the first band
+  # (green, yellow, orange) whose interval contains it, otherwise red. This is
+  # equivalent to tail.R's "Value >= a & Value < b | Value > c & Value <= d" form.
+  temperature:  # l.82-104, label l.351-369
+    domain: thermal
+    unit: "°C"
+    round: 1                                     # l.84
+    rule: time_share
+    heating_months: [10, 11, 12, 1, 2, 3, 4, 5]  # l.85-87; June-September are non-heating
+    bands:
+      heating:                                   # l.89-94
+        green: [21.0, 23.0]
+        yellow: [20.0, 24.0]
+        orange: [19.0, 25.0]
+      non_heating:                               # l.95-100
+        green: [23.5, 25.5]
+        yellow: [23.0, 26.0]
+        orange: [22.0, 27.0]
+
+  relative_humidity:  # l.107-128, label l.450-470
+    domain: iaq
+    unit: "%"
+    floor: 1         # l.108-109: values below 1 % are set to 1 %
+    above_100: 95    # l.110: values above 100 % are set to 95 %
+    round: 0         # l.111
+    rule: time_share
+    default_building_type: office  # tail.R only rates offices and hotels; hvx uses the office bands otherwise
+    bands:
+      office:                      # l.113-118
+        green: [30, 50]
+        yellow: [25, 60]
+        orange: [20, 70]
+      hotel:                       # l.119-123: Orange only 20-<25 %, above 60 % is Red
+        green: [30, 50]
+        yellow: [25, 60]
+        orange: [20, 60]
+
+  co2:  # l.148-172, label l.388-402
+    domain: iaq
+    unit: "ppm"
+    rule: percentile
+    percentile: 95                 # l.157
+    outdoor_ppm: 420               # l.149-153: values below outdoor are set to outdoor
+    # Upper limits (inclusive) of the 95th percentile, as ppm above outdoor:
+    # 420 + 550/800/1350 = 970/1220/1770 ppm (l.163-166).
+    above_outdoor: {green: 550, yellow: 800, orange: 1350}
+
+  # Pollutants with Green/Yellow/Red only (l.131-221). Negative values are
+  # dropped, values below 1 set to 0, then rounded to integers. A value is Green
+  # below green_below, Yellow below yellow_below, otherwise Red. Label: any Red
+  # sample -> IV, else any Yellow sample -> II, else I (l.479-550).
+  pm25:          # l.131-144, label l.515-527
+    domain: iaq
+    unit: "µg/m³"
+    rule: worst_sample
+    limits: {green_below: 10, yellow_below: 25}
+  formaldehyde:  # l.175-189, label l.497-509
+    domain: iaq
+    unit: "µg/m³"
+    rule: worst_sample
+    limits: {green_below: 30, yellow_below: 100}
+  benzene:       # l.192-205, label l.479-491
+    domain: iaq
+    unit: "µg/m³"
+    rule: worst_sample
+    limits: {green_below: 2, yellow_below: 5}
+  radon:         # l.208-221, label l.534-546
+    domain: iaq
+    unit: "Bq/m³"
+    rule: worst_sample
+    limits: {green_below: 100, yellow_below: 300}
+
+  ventilation:  # l.53-60 and 224-238, label l.408-422
+    domain: iaq
+    unit: "l/s"
+    round: 1                       # l.227
+    rule: worst_sample             # each sample is categorised; the label is the worst category
+    # Minimum outdoor-air supply (inclusive) = per_person * persons + per_m2 * floor area
+    per_person: {green: 10.0, yellow: 7.0, orange: 4.0}   # l.58-60
+    per_m2: {green: 2.0, yellow: 1.4, orange: 0.8}
+
+  mold:  # l.242-253, label l.429-443 (worst observation)
+    domain: iaq
+    unit: null
+    rule: worst_sample
+    # Inspection phrases exactly as tail.R expects them (case and spacing are
+    # normalised); hvx also accepts the short keys and a visible area in cm².
+    phrases:
+      green: ["No visible mold"]
+      yellow: ["Small areas visible mold, <400 cm2"]
+      orange: ["Slightly larger areas visible mold, <  2500 cm2"]
+      red: ["Large areas visible mold, > 2500 cm2"]
+    keys:
+      green: ["none", "no visible mold", "no visible mould", "no mold", "no mould"]
+      yellow: ["small"]
+      orange: ["slightly larger", "medium"]
+      red: ["large"]
+    area_cm2: {yellow_below: 400, orange_below: 2500}  # 0 cm² is Green
+
+  noise:  # l.258-287, label l.570-584
+    domain: acoustic
+    unit: "dB(A)"
+    round: 0                       # l.260
+    floor: 30                      # l.261: values below 30 dB are set to 30 dB
+    rule: percentile
+    percentile: 5                  # l.265
+    # Upper limits (inclusive) of the 5th percentile per room type (l.271-282).
+    # tail.R writes the hotel Orange band as 30 < P5 < 35 and Red as P5 > 35, so
+    # P5 = 35 dB gets no category there; hvx treats it as Orange (<=), like the
+    # other room types.
+    limits:
+      small_office: {green: 30, yellow: 35, orange: 40}
+      open_office: {green: 35, yellow: 40, orange: 45}
+      hotel: {green: 25, yellow: 30, orange: 35}
+    # hvx room types mapped onto tail.R's RoomType values (names are
+    # lower-cased, with spaces and hyphens as underscores). Other room types
+    # are not rated for noise.
+    room_types:
+      small_office: [small_office, private_office, single_office, cell_office]
+      open_office: [open_office, open_plan_office, open_plan]
+      hotel: [hotel, hotel_room]
+
+  illuminance:  # l.291-320, label l.599-613
+    domain: luminous
+    unit: "lx"
+    floor: 30                      # l.292
+    rule: time_share_lux
+    default_building_type: office  # tail.R only rates offices and hotels; hvx uses the office rule otherwise
+    office:                        # l.301-306: share of time within 300-500 lx
+      within_lux: [300, 500]
+      green_above_pct: 60          # > 60 %
+      yellow_min_pct: 40           # 40-60 %
+      orange_min_pct: 10           # 10-<40 %, below 10 % Red
+    hotel:                         # l.309-314: share of time at or above 100 lx
+      at_least_lux: 100
+      green_max_pct: 0             # = 0 %
+      yellow_max_pct: 50           # >0-50 %
+      orange_max_pct: 90           # >50-90 %, above 90 % Red
+
+  daylight_factor:  # l.325-337, label l.620-634 (worst value)
+    domain: luminous
+    unit: "%"
+    rule: worst_sample
+    min: {green: 5.0, yellow: 3.3, orange: 2.0}  # inclusive lower limits; below 2.0 Red
+
+# Building types that use tail.R's "Hotel" rules (RH, illuminance; noise when
+# the room type is unknown).
+hotel_building_types: [hotel, hospitality]
+
+# ---------------------------------------------------------------------------
+# Building-type profiles. Offices and hotels follow the TAIL paper (Wargocki et
+# al. 2021, Tables 2-5) and tail.R; schools follow the TAIL rating scheme for
+# schools (M.-T. Tran, "Construction of an aggregate indicator of indoor
+# environmental quality in schools", PhD thesis, IMT Atlantique, 2024, ch. III.3,
+# Tables 6-9, 11). A profile's `parameters` are deep-merged over `parameters`.
+# `hours` are the assessed (occupied) hours used when the caller does not filter:
+# offices 09-17 and hotels 22-06 as in predicTAIL (Wei et al. 2022), schools
+# 08-17 (thesis III.3).
+profiles:
+  office:
+    building_types: [office, commercial]
+    hours: {start: "09:00", end: "17:00", weekdays: [0, 1, 2, 3, 4]}
+    aggregation: parameter_mean    # TAIL paper Eq. 1: mean of the rooms' parameter ratings
+  hotel:
+    building_types: [hotel, hospitality]
+    hours: {start: "22:00", end: "06:00", weekdays: [0, 1, 2, 3, 4, 5, 6]}  # sleeping hours
+    aggregation: parameter_mean
+  school:
+    building_types: [school, education, classroom, kindergarten]
+    hours: {start: "08:00", end: "17:00", weekdays: [0, 1, 2, 3, 4]}
+    aggregation: domain_mean       # thesis Fig. 10: classroom TAIL, then mean of classroom domain ratings
+    default_room_type: classroom
+    parameters:
+      co2:                         # Table 8 + Fig. 8: >= 94 % of the time within the category
+        rule: time_share
+      pm25:                        # Table 8 (WHO 2021): I < 5, II >= 5, IV >= 15 ug/m3
+        limits: {green_below: 5, yellow_below: 15}
+      no2:                         # Table 8 (WHO 2021 / ANSES): I < 10, II < 20, IV >= 20 ug/m3
+        domain: iaq
+        unit: "µg/m³"
+        rule: worst_sample
+        limits: {green_below: 10, yellow_below: 20}
+      noise:                       # Table 7 (EN 16798-1): classrooms <= 30 / 34 / 38 dB(A), P5 when occupied
+        limits:
+          classroom: {green: 30, yellow: 34, orange: 38}
+        room_types:
+          classroom: [classroom, class_room, teaching_room, klasselokale, undervisningsrum, klasseværelse]
+      reverberation_time:          # Table 7 (French order of 25 April 2003, Danish BR10); III has no criteria
+        domain: acoustic
+        unit: "s"
+        rule: spot
+        small_room_volume_m3: 250
+        small: {green: [0.4, 0.6], yellow: [0.6, 0.8]}
+        large: {green: [0.6, 0.8], yellow: [0.8, 1.2]}
+      illuminance:                 # Table 9 (EN 12464-1): total illuminance >= 500 / 300 / 200 lx
+        rule: time_share_min_lux   # thesis rates spot measurements; for continuous logs hvx applies
+        min_lux: {green: 500, yellow: 300, orange: 200}  # the time-share rule (>= 94 % of school hours)
+
+# Adaptive temperature limits for buildings WITHOUT mechanical cooling in the
+# non-heating season (TAIL paper Table 2, thesis Table 6): around
+# 0.33 * theta_rm + 18.8 °C, Green -3/+2, Yellow -4/+3, Orange -5/+4 K. theta_rm is
+# the running mean of daily outdoor temperature (alpha 0.8). Used when the
+# building has mechanical_cooling: false and outdoor temperature is available.
+# Validity (EN 16798-1 B.2.2): upper limits for theta_rm 10-30 °C, lower for
+# 15-30 °C; hvx holds each limit at the end of its range outside it, and uses the
+# fixed bands above 30 °C.
+adaptive_temperature:
+  offsets:
+    green: [-3.0, 2.0]
+    yellow: [-4.0, 3.0]
+    orange: [-5.0, 4.0]
+  upper_valid: [10.0, 30.0]
+  lower_valid: [15.0, 30.0]
+
+# Not TAIL parameters: rated with hvx's own limits and reported as extensions,
+# never part of the Indoor Air domain or the overall rating.
+extensions:
+  pm10:
+    unit: "µg/m³"
+    rule: worst_sample
+    bands: {green: [null, 30.0], yellow: [null, 50.0], orange: [null, 75.0]}
+  voc:
+    unit: "µg/m³"
+    rule: worst_sample
+    bands: {green: [null, 300.0], yellow: [null, 600.0], orange: [null, 1000.0]}
+  no2:  # TAIL parameter only in the school profile; an extension elsewhere (same WHO-based limits)
+    unit: "µg/m³"
+    rule: worst_sample
+    bands: {green: [null, 9.999], yellow: [null, 19.999], orange: [null, 19.999]}  # no Orange level
+
+# hvx entity-hierarchy roll-up of room results (Room -> Floor -> Building ->
+# Portfolio). Reports use the profile's `aggregation` instead (TAIL paper Eq. 1
+# for offices and hotels, thesis Fig. 10 for schools); tail.R itself pools the
+# data of all monitored rooms (l.22-66).
+aggregation:
+  # Options: "worst", "best", "average", "weighted_average"
+  spatial_method: "worst"
+  metric: "rating"
+  weight_properties:
+    - area_m2
+    - design_occupancy
+  rollup_targets:
+    - room
+    - floor
+    - building
+    - portfolio
+  run_on_types:
+    - room
+  rollup_from_children:
+    - room
+    - floor
+  aggregate_to_types:
+    - floor
+    - building
+    - portfolio
+
+# Analysis module
+analysis_module: "hvx.standards.tail.analysis:run"

@@ -1,0 +1,18 @@
+# BAW report template.
+#
+# Fill in the company details below. Reports refuse to render with this brand
+# while a `required` field is empty, so a report never ships with a blank or
+# made-up CVR number. Use it with:  hvx report ... --brand baw
+# (or ReportConfig(branding="baw")). Without --brand, reports are white-label.
+
+name: baw            # wordmark as in the BAW logo (lowercase)
+legal_name: "BAW – Bruno Adam"   # the practice of Bruno Adam
+cvr: "46539214"          # 8-digit CVR number
+address: "Copenhagen"
+email: ""
+phone: ""
+website: "brunoadam.eu"
+logo: ""                # SVG or PNG, path relative to this file (or absolute); empty: name as wordmark
+accent: "#2d5b88"       # BAW "blueprint": links and information (signal yellow is not for text)
+
+required: [legal_name, cvr]
