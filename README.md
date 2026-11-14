@@ -22,6 +22,8 @@ pip install hvx                 # core: standards, reporting, live monitoring, C
 pip install "hvx[brick,ifc]"    # + Brick RDF and IFC import/write-back
 pip install "hvx[chirpstack]"   # + LoRaWAN sensors through ChirpStack
 pip install "hvx[api]"          # + FastAPI backend (hvx serve)
+pip install "hvx[mcp]"          # + MCP server for AI assistants (hvx mcp)
+pip install "hvx[pdf]"          # + PDF reports (then: playwright install chromium)
 pip install "hvx[all]"          # everything (incl. pythermalcomfort / numba)
 ```
 
@@ -188,7 +190,39 @@ Design for scale:
 
 API: `POST /api/reports` with `{"format": "html" | "json" | "csv", "seasons": [...], "target_category": "II"}`.
 
+Branding: reports are white-label by default; `--brand baw` / `ReportConfig(branding=...)`
+adds a logo, accent colour and company details incl. CVR number (`src/hvx/reporting/brands/`).
+
 The old `hvx.simulations.models.reporting.HTMLReportService` still works and now delegates to this pipeline.
+
+### 🤖 Building reports with an AI assistant (MCP)
+
+`hvx mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server, so an
+assistant such as Claude can load data, build reports and export them on request:
+
+```bash
+pip install "hvx[mcp,pdf]"
+claude mcp add hvx -- hvx mcp                  # Claude Code
+```
+
+For Claude Desktop, add to `claude_desktop_config.json`:
+
+```json
+{"mcpServers": {"hvx": {"command": "hvx", "args": ["mcp"], "env": {"HVX_MCP_ROOT": "/path/to/projects"}}}}
+```
+
+| Tool | Does |
+|---|---|
+| `load_csv_folder`, `load_climify_export`, `load_site` | Load data (hvx CSV layout, Climify + DMI exports, live site YAML) |
+| `describe_data` | Buildings, rooms, parameters, period, missing climate data |
+| `build_report` | Language, seasons, target, occupied hours, holidays, branding → key figures |
+| `report_details` | Buildings, priority actions, rooms needing attention, one room |
+| `export_report` | HTML, PDF, JSON or CSV, branded or white-label |
+| `list_brands` | Built-in brands and whether their details are filled in |
+
+The `ieq_report` prompt walks through the whole flow. Tools run with your file
+permissions; `HVX_MCP_ROOT` confines all paths to one folder, and existing files are
+only overwritten when asked.
 
 ## 🧱 Semantic data model (IFC + Brick)
 

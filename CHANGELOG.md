@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- MCP server (`hvx mcp`, `mcp` extra): AI assistants can load data (CSV, Climify/DMI,
+  live sites), build reports, inspect buildings/actions/rooms and export HTML/PDF/JSON/CSV;
+  `HVX_MCP_ROOT` confines file access. Works with MCP Python SDK 1.x and 2.x.
 - Report branding: white-label by default (no company details anywhere); a brand adds
   logo or wordmark, accent colour and a company block with CVR number to the HTML report
   and the PDF footer. Built-in `baw` template (`--brand baw`, `ReportConfig(branding="baw")`,
