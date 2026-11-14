@@ -43,6 +43,7 @@ class RoomTask:
     region: Optional[str] = None
     building_type: Optional[str] = None
     climate: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    holiday_periods: List[Any] = field(default_factory=list)  # from building/portfolio metadata
 
 
 def _round(value: Optional[float], digits: int = 1) -> Optional[float]:
@@ -115,6 +116,24 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
 
     report.data_quality = _data_quality(df)
     ieq_cols = [c for c in IEQ_PARAMETERS if c in df.columns]
+    durations = _sample_hours(df)
+
+    # Standards apply "during use": assess occupied samples only.
+    full = df
+    if config.occupied_only and isinstance(df.index, pd.DatetimeIndex):
+        schedule = config.schedule_for(building_type, task.holiday_periods)
+        occupied = schedule.mask(df.index, country).to_numpy()
+        df = df[occupied]
+        durations = durations[occupied]
+        report.occupancy = schedule.describe()
+        report.data_quality["occupied_hours"] = round(float(durations.sum()), 1)
+        if df.empty:
+            report.status = "no_data"
+            report.message = f"No data during occupied hours ({report.occupancy})"
+            return
+    else:
+        report.occupancy = "all hours"
+    _exceedance(report, df, durations, config)
 
     # --- standards, per season, on private copies ---------------------------
     assessments: List[IEQAssessment] = []
@@ -179,13 +198,18 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
         br18 = results.get("br18")
         if isinstance(br18, dict) and br18.get("overall_pass") is not None:
             season_result.br18_pass = bool(br18["overall_pass"])
+            season_result.br18_failed = [
+                str(rule.get("name") or rule_id)
+                for rule_id, rule in (br18.get("rules") or {}).items()
+                if isinstance(rule, dict) and rule.get("passed") is False
+            ]
         report.seasons.append(season_result)
 
     _combine(report, assessments, config, df)
 
     # --- simulations on the full period -------------------------------------
     if config.include_simulations:
-        _simulate(report, df, room, config)
+        _simulate(report, full, df, room, config)
 
     report.issues = _issues(report, config)
 
@@ -222,10 +246,16 @@ def _data_quality(df: pd.DataFrame) -> Dict[str, Any]:
 def _combine(report: RoomReport, assessments: List[IEQAssessment], config: ReportConfig, df: pd.DataFrame) -> None:
     report.assessments = [a.model_dump(mode="json") for a in assessments]
     categories = [a.achieved_category for a in assessments]
-    worst = ComfortCategory.worst(*categories)
-    report.achieved_category = worst.value if worst else None
-    if worst is not None:
-        report.meets_target = worst.rank <= ComfortCategory(config.target_category).rank
+    if assessments and any(c is None for c in categories):
+        # Assessed but not even Category IV in some season: the worst possible outcome.
+        report.below_category_iv = True
+        report.achieved_category = None
+        report.meets_target = False
+    else:
+        worst = ComfortCategory.worst(*categories)
+        report.achieved_category = worst.value if worst else None
+        if worst is not None:
+            report.meets_target = worst.rank <= ComfortCategory(config.target_category).rank
 
     for name in IEQ_PARAMETERS:
         entries = [(a.parameters[name], a.samples or 1) for a in assessments if name in a.parameters]
@@ -248,9 +278,12 @@ def _combine(report: RoomReport, assessments: List[IEQAssessment], config: Repor
     report.tail_rating = tail_worst.value if tail_worst else None
     passes = [s.br18_pass for s in report.seasons if s.br18_pass is not None]
     report.br18_pass = all(passes) if passes else None
+    report.br18_failed = sorted({name for s in report.seasons for name in s.br18_failed})
 
 
-def _simulate(report: RoomReport, df: pd.DataFrame, room: Room, config: ReportConfig) -> None:
+def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Room, config: ReportConfig) -> None:
+    """``full``: all hours (CO₂ decay happens when rooms empty). ``df``: assessed (occupied) hours,
+    used for overheating, correlations and scenarios so they match the standards' numbers."""
     from hvx.simulations.models.correlations import ClimateCorrelationModel
     from hvx.simulations.models.recommendations import SmartRecommendationsModel
     from hvx.simulations.models.scenario import ScenarioImpactModel
@@ -258,10 +291,13 @@ def _simulate(report: RoomReport, df: pd.DataFrame, room: Room, config: ReportCo
 
     ventilation = correlations = scenarios = None
     try:
-        if "co2" in df.columns:
-            ventilation = VentilationCalculator().estimate_from_co2_decay(df["co2"].dropna(), volume_m3=room.volume_m3)
+        if "co2" in full.columns:
+            ventilation = VentilationCalculator().estimate_from_co2_decay(full["co2"].dropna(), volume_m3=room.volume_m3)
             if ventilation is not None:
                 report.ventilation = {
+                    # Decays mostly happen after hours, when mechanical ventilation may be off:
+                    # this characterises the room then, not necessarily during lessons.
+                    "basis": "CO₂ decay periods at any time of day",
                     "ach": _round(ventilation.ach, 2),
                     "category": ventilation.category,
                     "r_squared": _round(ventilation.r_squared, 3),
@@ -294,14 +330,52 @@ def _simulate(report: RoomReport, df: pd.DataFrame, room: Room, config: ReportCo
             report.warnings.append(f"Recommendations failed: {exc}")
 
 
+def _sample_hours(df: pd.DataFrame) -> pd.Series:
+    """Hours each sample stands for (gap to the next one, capped so data gaps don't count)."""
+    if not isinstance(df.index, pd.DatetimeIndex) or len(df) < 2:
+        return pd.Series(1.0, index=df.index)
+    gaps = df.index.to_series().diff().shift(-1).dt.total_seconds() / 3600.0
+    typical = float(gaps.median()) if gaps.notna().any() else 1.0
+    return gaps.fillna(typical).clip(lower=0, upper=max(typical, 1e-9) * 3)
+
+
+def _exceedance(report: RoomReport, df: pd.DataFrame, hours: pd.Series, config: ReportConfig) -> None:
+    for parameter, limits in config.exceedance_thresholds.items():
+        if parameter not in df.columns:
+            continue
+        values = df[parameter]
+        for limit in limits:
+            report.exceedance_hours[f"{parameter}>{limit:g}"] = round(float(hours[values > limit].sum()), 1)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        return
+    minutes = df.index.hour * 60 + df.index.minute
+    for name, (start, end) in config.day_periods.items():
+        a, b = (int(x.split(":")[0]) * 60 + int(x.split(":")[1]) for x in (start, end))
+        in_period = (minutes >= a) & (minutes < b)
+        sub, sub_hours = df[in_period], hours[in_period]
+        total = float(sub_hours[sub.notna().any(axis=1)].sum()) if len(sub) else 0.0
+        if not total:
+            continue
+        stats: Dict[str, Optional[float]] = {"hours": round(total, 1)}
+        for parameter, limits in config.exceedance_thresholds.items():
+            if parameter in sub.columns and limits:
+                valid = float(sub_hours[sub[parameter].notna()].sum())
+                over = float(sub_hours[sub[parameter] > limits[0]].sum())
+                stats[f"{parameter}_mean"] = _round(sub[parameter].mean(), 1)
+                stats[f"{parameter}>{limits[0]:g}_pct"] = round(100.0 * over / valid, 1) if valid else None
+        report.period_breakdown[name] = stats
+
+
 def _issues(report: RoomReport, config: ReportConfig) -> List[str]:
     issues: List[str] = []
     target = config.target_category
     if report.achieved_category and report.meets_target is False:
         issues.append(f"Achieves Category {report.achieved_category}; target is Category {target}.")
-    elif report.achieved_category is None and report.seasons and report.status == "ok":
-        if any(s.time_in_category_pct for s in report.seasons):
-            issues.append("Below Category IV for a significant share of the time.")
+    elif report.below_category_iv:
+        seasons = [s.season for s in report.seasons if s.achieved_category is None and s.time_in_category_pct]
+        issues.append(f"Below EN 16798 Category IV ({', '.join(seasons) or 'assessed period'}); target is Category {target}.")
+    if report.br18_failed:
+        issues.append(f"BR18 not met: {'; '.join(report.br18_failed)}.")
     for name, summary in report.parameters.items():
         if summary.compliance_pct is None or summary.compliance_pct >= config.issue_threshold_pct:
             continue
@@ -315,6 +389,18 @@ def _issues(report: RoomReport, config: ReportConfig) -> List[str]:
             detail.append(f"range {summary.minimum:g}–{summary.maximum:g} {summary.unit or ''}".strip())
         suffix = f" ({', '.join(detail)})" if detail else ""
         issues.append(f"{label} within Category {target} limits only {summary.compliance_pct:g}% of the time{suffix}.")
+    occupied = (report.data_quality or {}).get("occupied_hours") or 0
+    for key, hours in report.exceedance_hours.items():
+        parameter, _, limit = key.partition(">")
+        if not hours:
+            continue
+        share = f" ({100 * hours / occupied:.0f}% of occupied time)" if occupied else ""
+        if parameter == "co2" and (not occupied or hours / occupied >= 0.05):
+            issues.append(f"CO₂ above {limit} ppm for {hours:g} h{share}.")
+        elif parameter == "temperature" and float(limit) == 26 and hours > 100:
+            issues.append(f"Above 26 °C for {hours:g} h in use (BR18 allows 100 h).")
+        elif parameter == "temperature" and float(limit) == 27 and hours > 25:
+            issues.append(f"Above 27 °C for {hours:g} h in use (BR18 allows 25 h).")
     return issues
 
 

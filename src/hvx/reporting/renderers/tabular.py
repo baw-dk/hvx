@@ -19,7 +19,8 @@ CSV_COLUMNS = [
     "area_m2", "status", "target_category", "achieved_category", "meets_target", "ieq_score",
     *[f"{p}_compliance_pct" for p in IEQ_PARAMETERS],
     *[f"{p}_mean" for p in IEQ_PARAMETERS],
-    "tail_rating", "br18_pass", "completeness_pct", "samples", "period_start", "period_end",
+    "co2_gt1000_h", "co2_gt2000_h", "temperature_gt26_h", "temperature_gt27_h", "occupied_hours", "occupancy",
+    "tail_rating", "br18_pass", "br18_failed", "below_category_iv", "completeness_pct", "samples", "period_start", "period_end",
     "issues", "brick_class", "ifc_guid",
 ]
 
@@ -53,7 +54,10 @@ def room_rows(report: PortfolioReport) -> List[Dict[str, Any]]:
             "room_id": r.room_id, "room_name": r.room_name, "room_type": r.room_type,
             "area_m2": r.area_m2, "status": r.status, "target_category": r.target_category,
             "achieved_category": r.achieved_category, "meets_target": r.meets_target, "ieq_score": r.ieq_score,
-            "tail_rating": r.tail_rating, "br18_pass": r.br18_pass,
+            "tail_rating": r.tail_rating, "br18_pass": r.br18_pass, "br18_failed": " | ".join(r.br18_failed),
+            "below_category_iv": r.below_category_iv, "occupancy": r.occupancy,
+            "occupied_hours": dq.get("occupied_hours"),
+            **{f"{k.replace('>', '_gt')}_h": v for k, v in r.exceedance_hours.items()},
             "completeness_pct": dq.get("completeness_pct"), "samples": dq.get("samples"),
             "period_start": dq.get("start"), "period_end": dq.get("end"),
             "issues": " | ".join(r.issues), "brick_class": r.brick_class, "ifc_guid": r.ifc_guid,

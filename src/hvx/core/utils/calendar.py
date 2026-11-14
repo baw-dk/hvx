@@ -7,7 +7,6 @@ Calendar helpers for holidays and operating periods.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Iterable, List, Optional, Set
 
 import pandas as pd
@@ -42,7 +41,9 @@ def get_holiday_dates(country_code: Optional[str]) -> List[pd.Timestamp]:
 
     normalized_dates: Set[pd.Timestamp] = set()
     try:
-        cal = holidays.country_holidays(country_code.upper())
+        # Without explicit years the calendar stays empty until queried by date.
+        this_year = pd.Timestamp.now().year
+        cal = holidays.country_holidays(country_code.upper(), years=range(this_year - 10, this_year + 2))
         normalized_dates.update(pd.to_datetime(list(cal.keys())))
     except Exception:
         pass

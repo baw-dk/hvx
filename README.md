@@ -31,7 +31,7 @@ adaptive model uses `pythermalcomfort` when the `comfort` extra is installed and
 built-in implementation otherwise.
 
 Package layout (`src/hvx/`): `core` (data model, IFC/Brick semantics),
-`standards`, `simulations`, `reporting`, `live`, `connectors` (CSV), `app`
+`standards`, `simulations`, `reporting`, `live`, `connectors` (CSV, Climify/DMI), `app`
 (FastAPI + Streamlit), `cli`.
 
 ## ⚡ Live data
@@ -122,6 +122,8 @@ and point ChirpStack at `/api/integrations/chirpstack` with the header
 - **Action** `hvx_ieq.generate_report`: writes the full HTML/JSON/CSV report to
   `/config/www/hvx_ieq/` (served at `/local/hvx_ieq/...`) and returns its path and URL.
 - **Data:** history comes from the recorder; nothing leaves Home Assistant.
+- **Building type** sets the assessed hours: *residential* (default) is 24/7,
+  *office*/*school* use opening hours.
 
 Install with HACS (custom repository → this repo → *Integration*), or copy
 `custom_components/hvx_ieq` into your `config/custom_components/`. Home Assistant
@@ -145,6 +147,20 @@ generate_report(portfolio, buildings, floors, rooms, "out/report.html", config=c
 report = ReportBuilder(config).build(portfolio, buildings, floors, rooms)
 render(report, "csv")  # one row per room, with Brick class and IFC GlobalId
 ```
+
+**Occupied hours.** Standards are applied "during use": by default the building
+type's opening hours (schools: weekdays 07:30–16:00) minus public holidays. Set
+your own hours and holiday periods, e.g. for a municipality's school calendar:
+
+```python
+from hvx.core.schedules import OccupancySchedule
+ReportConfig(occupancy=OccupancySchedule(start="08:00", end="16:00",
+             holiday_periods=(("2024-06-22", "2024-08-11"), ("2024-10-14", "2024-10-18"))))
+```
+
+Assessing 24/7 instead (`occupied_only=False`) lets nights and holidays dilute
+the results: on a 58-classroom dataset it raised CO₂ compliance from 73% to 94%
+and inflated hours above 26 °C tenfold (empty, sun-heated summer holidays).
 
 What the report contains: KPIs, key findings, category distribution, IEQ-score
 histogram, priority actions merged across rooms, a building table, detailed

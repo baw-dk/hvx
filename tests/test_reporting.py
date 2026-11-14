@@ -56,8 +56,13 @@ def test_full_year_assesses_each_season_separately():
     result = report.rooms[0]
     seasons = {s.season: s for s in result.seasons}
     assert set(seasons) == {"winter", "summer"}
-    # DK heating/cooling months partition the year: each sample lands in exactly one season.
-    assert seasons["winter"].samples + seasons["summer"].samples == len(room.timestamps)
+    # Only occupied hours are assessed; DK heating/cooling months then split them with no overlap.
+    import pandas as pd
+
+    from hvx.core.schedules import OccupancySchedule
+
+    occupied = OccupancySchedule.for_building_type("office").mask(pd.to_datetime(room.timestamps), "DK")
+    assert seasons["winter"].samples + seasons["summer"].samples == int(occupied.sum())
     assert seasons["summer"].period_start.startswith("2025-05")
     # Summer (+4 °C) must assess differently from winter (no stale cache reuse)...
     assert seasons["winter"].achieved_category != seasons["summer"].achieved_category
@@ -199,3 +204,88 @@ def test_room_standards_cache_is_per_season(portfolio):
     assert winter["en16798_1"]["season"] == "winter"
     assert summer["en16798_1"]["season"] == "summer"
     assert room.compute_standards(country="DK", building_type="office", season="winter") is winter
+
+
+def test_occupied_hours_only_and_exceedance():
+    """Night-time fresh air must not hide daytime CO2 problems (the school-report case)."""
+    import numpy as np
+    import pandas as pd
+
+    from hvx.core.schedules import OccupancySchedule
+
+    p, b, f, r = make_portfolio(n_buildings=1, n_rooms=1, days=14, freq="1h")
+    room = next(iter(r.values()))
+    idx = pd.to_datetime(room.timestamps)
+    school = OccupancySchedule(start="08:00", end="16:00").mask(idx, "DK").to_numpy()
+    co2 = np.where(school, 1500.0, 420.0)  # stuffy every lesson, fresh at night
+    room.timeseries_data = {"temperature": [22.0] * len(idx), "co2": co2.tolist(), "humidity": [40.0] * len(idx)}
+
+    occ = ReportBuilder(ReportConfig(occupancy=OccupancySchedule(start="08:00", end="16:00"), **FAST)).build(p, b, f, r).rooms[0]
+    all_hours = ReportBuilder(ReportConfig(occupied_only=False, **FAST)).build(p, b, f, r).rooms[0]
+
+    assert occ.compliance["co2"] == 0.0  # every occupied hour above the Cat II limit
+    assert all_hours.compliance["co2"] > 70  # what a 24/7 assessment would claim
+    assert occ.exceedance_hours["co2>1000"] == pytest.approx(school.sum())  # 1 h samples
+    assert occ.exceedance_hours["co2>2000"] == 0
+    assert occ.data_quality["occupied_hours"] == pytest.approx(school.sum())
+    assert occ.period_breakdown["morning"]["co2>1000_pct"] == 100.0
+    assert "08:00–16:00" in occ.occupancy
+    assert any("CO₂ above 1000 ppm" in i for i in occ.issues)
+
+
+def test_holiday_periods_from_metadata_and_empty_occupancy():
+    p, b, f, r = make_portfolio(n_buildings=1, n_rooms=1, start="2025-01-06", days=5, freq="1h")
+    b["b0"].metadata["holiday_periods"] = [["2025-01-06", "2025-01-10"]]  # whole week off
+    report = ReportBuilder(ReportConfig(**FAST)).build(p, b, f, r)
+    assert report.rooms[0].status == "no_data" and "occupied hours" in report.rooms[0].message
+
+
+def test_sample_hours_handle_mixed_resolution():
+    import pandas as pd
+
+    from hvx.reporting.analysis import _sample_hours
+
+    idx = pd.DatetimeIndex(["2025-01-06 08:00", "2025-01-06 09:00", "2025-01-06 10:00", "2025-01-06 10:15",
+                            "2025-01-06 10:30", "2025-01-08 10:30"])
+    hours = _sample_hours(pd.DataFrame({"co2": range(6)}, index=idx))
+    assert list(hours.round(2)) == [1.0, 1.0, 0.25, 0.25, 3.0, 1.0]  # 2-day gap capped at 3x typical (1 h); last = typical
+
+
+def test_below_category_iv_rooms_rank_first_and_count_against_group():
+    from hvx.reporting.aggregate import worst_rooms
+    from hvx.reporting.model import RoomReport
+
+    ok_iii = RoomReport("a", "A", achieved_category="III", meets_target=False, ieq_score=60.0)
+    below = RoomReport("b", "B", achieved_category=None, below_category_iv=True, meets_target=False, ieq_score=70.0)
+    fine = RoomReport("c", "C", achieved_category="II", meets_target=True, ieq_score=99.0)
+    assert worst_rooms([fine, ok_iii, below], 3)[:2] == ["a", "b"]  # both miss target; lower score first
+    # 2 rooms in III, 2 below IV: only 50 % reach III, so the group is not III
+    assert group_category({"III": 2}, 0.7, below_iv=2) is None
+    assert group_category({"III": 2}, 0.7) == "III"
+
+
+def test_room_below_iv_in_one_season_is_below_iv_overall():
+    from hvx.reporting.analysis import _combine
+    from hvx.reporting.model import RoomReport
+    from hvx.core.semantics.ieq import IEQAssessment
+
+    report = RoomReport("r", "R")
+    winter = IEQAssessment(entity_id="r", season="winter", achieved_category="II")
+    summer = IEQAssessment(entity_id="r", season="summer", achieved_category=None)
+    _combine(report, [winter, summer], ReportConfig(**FAST), None)
+    assert report.below_category_iv and report.achieved_category is None and report.meets_target is False
+
+
+def test_ventilation_recommendation_follows_measured_co2():
+    from hvx.simulations.models.recommendations import SmartRecommendationsModel
+    from hvx.simulations.models.recommendations.model import RecommendationType
+    from hvx.simulations.models.scenario import ScenarioImpactSummary
+    from hvx.simulations.models.ventilation import VentilationRateResult
+
+    low_ach = VentilationRateResult(0.3, None, 0.9, 900, 420, 420, (0.2, 0.4), 0.9, "poor", "after-hours decay")
+    scen = ScenarioImpactSummary(None, None, None, None)
+    model = SmartRecommendationsModel()
+    kinds = lambda co2: {r.type for r in model._ventilation_recommendation("R", co2, low_ach, scen) and [model._ventilation_recommendation("R", co2, low_ach, scen)] or []}  # noqa: E731
+    assert kinds(98.0) == set()  # good CO2 during use: low after-hours ACH alone is not a problem
+    assert kinds(60.0) == {RecommendationType.VENTILATION}
+    assert kinds(None) == {RecommendationType.VENTILATION}  # no CO2 assessment: fall back to ACH

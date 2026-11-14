@@ -106,11 +106,13 @@ class ReportBuilder:
         building = buildings.get(building_id or "")
         floor = floors.get(room.floor_id or "")
         climate: Dict[str, dict] = {}
+        holiday_periods: list = []
         for source in (portfolio, building):
             meta = getattr(source, "metadata", None) or {}
             for key in ("climate_data", "climate_timeseries"):
                 if isinstance(meta.get(key), dict):
                     climate.update(meta[key])
+            holiday_periods.extend(meta.get("holiday_periods") or [])
         if building_id and not room.building_id:
             room = room.model_copy(update={"building_id": building_id})
         return RoomTask(
@@ -121,6 +123,7 @@ class ReportBuilder:
             region=(building.region if building else None) or portfolio.region,
             building_type=building.building_type if building else None,
             climate=climate,
+            holiday_periods=holiday_periods,
         )
 
     def _run(self, tasks: List[RoomTask]) -> List[RoomReport]:

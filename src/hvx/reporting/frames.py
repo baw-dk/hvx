@@ -55,7 +55,7 @@ def climate_frame(payloads: Mapping[str, Mapping[str, Any]]) -> Optional[pd.Data
         frames.append(series)
     if not frames:
         return None
-    df = pd.concat(frames, axis=1)
+    df = pd.concat(frames, axis=1, sort=True)  # nearest-time alignment needs a sorted index
     return df.loc[:, ~df.columns.duplicated()]
 
 

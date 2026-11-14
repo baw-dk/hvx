@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Reports assess **occupied hours only** by default (building-type opening hours,
+  public holidays, configurable school/holiday periods via `ReportConfig.occupancy`,
+  `holiday_periods` or `metadata["holiday_periods"]`); `occupied_only=False` restores 24/7.
+- Hours above limits per room and building (CO₂ > 1000/2000 ppm, > 26/27 °C),
+  morning/afternoon breakdown, failing BR18 rules named in reports and CSV.
+- `hvx.connectors.climify`: Climify room exports and DMI weather files (UTC → local time).
 - ChirpStack (LoRaWAN) live source: MQTT integration, gRPC API backfill, HTTP
   integration webhook; `hvx chirpstack listen`.
 - Live data layer (`hvx.live`): Home Assistant REST and push sources, rolling
@@ -22,6 +28,13 @@ All notable changes to this project are documented here. The format follows
 - Imports move to the `hvx` namespace (`from hvx.core ...`).
 
 ### Fixed
+- Rooms below EN 16798 Category IV in a season were shown as Category IV or left out of
+  "rooms needing attention"; they now rank first and count against building categories.
+- "Increase ventilation" was recommended for every room with a low after-hours CO₂ decay
+  rate; it now follows measured CO₂ during use.
+- Overheating and scenario analyses used all hours (including empty holidays).
+- Public holidays were never excluded (`holidays` calendar created without years).
+- Home Assistant integration defaults to "residential" (24/7) instead of "office".
 - EN 16798: rooms missing a parameter got no category; missing samples counted
   as violations; `assess_timeseries_compliance` always raised.
 - Full-year reports reused the winter result for summer.

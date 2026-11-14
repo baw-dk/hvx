@@ -20,7 +20,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import asy
 
 from custom_components.hvx_ieq.const import CONF_ROOMS, CONF_TARGET_CATEGORY, DOMAIN
 
-START = datetime(2025, 1, 14, 6, 0, tzinfo=timezone.utc)  # a winter weekday
+START = datetime(2025, 1, 14, 16, 0, tzinfo=timezone.utc)  # 08:00 on a winter weekday in the test instance (US/Pacific)
 STEPS = 48  # 8 hours at 10-minute steps
 
 SENSORS = {

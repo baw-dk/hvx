@@ -41,6 +41,7 @@ class SeasonResult:
     period_end: Optional[str] = None
     tail_rating: Optional[str] = None
     br18_pass: Optional[bool] = None
+    br18_failed: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -68,12 +69,17 @@ class RoomReport:
     seasons: List[SeasonResult] = field(default_factory=list)
     tail_rating: Optional[str] = None
     br18_pass: Optional[bool] = None
+    br18_failed: List[str] = field(default_factory=list)  # names of BR18 rules not met
+    below_category_iv: bool = False  # assessed, but below EN 16798 Category IV
 
     data_quality: Dict[str, Any] = field(default_factory=dict)
     ventilation: Optional[Dict[str, Any]] = None
     correlations: Dict[str, Optional[float]] = field(default_factory=dict)
     scenarios: List[Dict[str, Any]] = field(default_factory=list)
     recommendations: List[Dict[str, Any]] = field(default_factory=list)
+    occupancy: Optional[str] = None  # description of the hours assessed
+    exceedance_hours: Dict[str, float] = field(default_factory=dict)  # e.g. {"co2>1000": 586.0}
+    period_breakdown: Dict[str, Dict[str, Optional[float]]] = field(default_factory=dict)
     issues: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     assessments: List[Dict[str, Any]] = field(default_factory=list)  # IEQAssessment dumps
@@ -105,6 +111,7 @@ class GroupSummary:
     meets_target_pct: Optional[float] = None
     ieq_score: Optional[float] = None
     compliance: Dict[str, Optional[float]] = field(default_factory=dict)
+    exceedance_hours: Dict[str, float] = field(default_factory=dict)  # mean per analysed room
     score_histogram: List[int] = field(default_factory=lambda: [0] * 10)
 
 
