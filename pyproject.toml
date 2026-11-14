@@ -63,9 +63,9 @@ hvx = "hvx.cli:cli"
 
 [project.urls]
 Homepage = "https://brunoadam.eu/"
-Repository = "https://github.com/Koto-Labs/hvx"
-Issues = "https://github.com/Koto-Labs/hvx/issues"
-Changelog = "https://github.com/Koto-Labs/hvx/blob/main/CHANGELOG.md"
+Repository = "https://github.com/baw-dk/hvx"
+Issues = "https://github.com/baw-dk/hvx/issues"
+Changelog = "https://github.com/baw-dk/hvx/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

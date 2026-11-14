@@ -1,4 +1,9 @@
-name: Release to PyPI and Homebrew
+name: Release to PyPI
+
+# Push a tag vX.Y.Z (matching pyproject.toml) to publish. PyPI trusted publishing:
+# no token is stored; PyPI trusts this workflow through GitHub's OIDC identity.
+# One-time setup on pypi.org -> Publishing -> pending publisher:
+#   project hvx, owner baw-dk, repository hvx, workflow release.yml, environment pypi
 
 on:
   push:
@@ -6,42 +11,54 @@ on:
       - "v*"
 
 jobs:
-  pypi-publish:
-    name: Upload release to PyPI
+  build:
+    name: Build and check distributions
     runs-on: ubuntu-latest
-    # environment block removed because 'pypi' is not a valid environment
-    permissions:
-      id-token: write
-      contents: write
     steps:
       - uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
-
-      - name: Install build dependencies
+          python-version: "3.12"
+      - name: Tag matches package version
         run: |
-          python -m pip install --upgrade pip
-          pip install build twine
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != version $version"; exit 1; }
+          python scripts/check_versions.py
+      - name: Build
+        run: python -m pip install --upgrade build twine && python -m build && twine check dist/*
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
 
-      - name: Build package
-        run: python -m build
+  pypi-publish:
+    name: Upload to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/hvx
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Check distribution
-        run: twine check dist/*
-
-      - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+  github-release:
+    name: GitHub release
+    needs: pypi-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
