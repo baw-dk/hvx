@@ -66,6 +66,20 @@ def cli(verbose: int) -> None:
     logging.basicConfig(level=[logging.WARNING, logging.INFO, logging.DEBUG][min(verbose, 2)], format="%(levelname)s %(name)s: %(message)s")
 
 
+
+@cli.command("mcp")
+@click.option("--transport", type=click.Choice(["stdio", "streamable-http"]), default="stdio", show_default=True)
+def mcp_command(transport: str) -> None:
+    """Run the MCP server (lets AI assistants load data and build reports).
+
+    Register it in Claude Code with:  claude mcp add hvx -- hvx mcp
+    Set HVX_MCP_ROOT to confine file access to one folder."""
+    try:
+        from hvx.mcp_server import main
+    except ImportError as exc:
+        raise click.ClickException('The MCP server needs the mcp extra: pip install "hvx[mcp]"') from exc
+    main(transport)
+
 @cli.command()
 @click.option("--site", "site_path", type=click.Path(exists=True, dir_okay=False), help="Site YAML with live sources.")
 @click.option("--csv", "csv_path", type=click.Path(exists=True), help="CSV folder (connectors.csv layouts).")
