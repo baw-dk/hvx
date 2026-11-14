@@ -35,8 +35,16 @@ dependencies = [
     "openpyxl>=3.1.0",  # Excel support
     "python-dateutil>=2.8.0",
     "brickschema>=0.6.0",  # Brick Schema ontology
-    "rdflib>=7.0.0",  # RDF graph support
+    "rdflib>=7.0.0",  # RDF graph support (Brick export/import)
+    "scipy>=1.10.0",
+    "pythermalcomfort>=2.8.0",  # EN 16798 adaptive comfort
+    "holidays>=0.42",
 ]
+
+[project.optional-dependencies]
+ifc = ["ifcopenshell>=0.8.0"]
+api = ["fastapi>=0.109.0", "uvicorn[standard]>=0.27.0", "python-multipart>=0.0.9"]
+dev = ["pytest>=7.4.0", "httpx>=0.27.0", "ifcopenshell>=0.8.0", "fastapi>=0.109.0", "python-multipart>=0.0.9"]
 
 
 
@@ -48,11 +56,14 @@ hvx = "core.cli.main:cli"  # Backwards compatibility
 Homepage = "https://brunoadam.eu/"
 Repository = "https://github.com/bruadam/hvx"
 
-[tool.setuptools]
-packages = ["core", "connectors", "standards", "simulations", "app"]
+[tool.setuptools.packages.find]
+include = ["core*", "connectors*", "standards*", "simulations*", "app*", "reporting*"]
 
 [tool.setuptools.package-data]
-core = ["py.typed"]
+core = ["py.typed", "semantics/ontology/*.ttl", "config/**/*.yaml"]
+reporting = ["templates/*.j2"]
+standards = ["*/config.yaml", "*/docs/*"]
+simulations = ["models/*/config.yaml"]
 
 [tool.black]
 line-length = 100

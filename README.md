@@ -180,6 +180,89 @@ cd refactored_service/examples
 python portfolio_analysis_example.py
 ```
 
+## 📑 Reporting
+
+The `reporting` package turns a portfolio into one structured report model
+(`PortfolioReport`, schema `hvx.ieq-report/2.0`) that is rendered as HTML,
+JSON or CSV — the three formats are views of the same data and cannot disagree.
+
+```python
+from reporting import ReportConfig, ReportBuilder, generate_report, render
+
+config = ReportConfig(
+    seasons=("winter", "summer"),  # full year: heating/cooling months assessed separately
+    target_category="II",          # EN 16798-1 target used for compliance % and the IEQ score
+)
+generate_report(portfolio, buildings, floors, rooms, "out/report.html", config=config)
+
+report = ReportBuilder(config).build(portfolio, buildings, floors, rooms)
+render(report, "csv")  # one row per room, with Brick class and IFC GlobalId
+```
+
+What the report contains: KPIs, key findings, category distribution, IEQ-score
+histogram, priority actions merged across rooms, a building table, detailed
+cards for the rooms furthest from target, a sortable/filterable table of all
+rooms, data-coverage notes and a method section.
+
+Design for scale:
+
+- **Parallel** — rooms are analysed independently in a process pool
+  (`max_workers`, `parallel_backend`); ~3.7× faster on 4 cores for 200 rooms.
+- **Side-effect free** — input entities are never modified; standards run on private copies.
+- **Fault-isolated** — a room that fails or has no data is reported as such; the rest of the report still builds.
+- **Readable at any size** — distributions and per-building rows instead of one bar per room; HTML is self-contained (no CDN) and autoescaped.
+- **Consistent numbers** — compliance % comes from the same EN 16798-1 run as the category, per season.
+
+API: `POST /api/reports` with `{"format": "html" | "json" | "csv", "seasons": [...], "target_category": "II"}`.
+
+The old `simulations.models.reporting.HTMLReportService` still works and now delegates to this pipeline.
+
+## 🧱 Semantic data model (IFC + Brick)
+
+Spatial entities carry their IFC/Brick identity and IEQ requirements:
+
+| HVX | IFC 4 | Brick 1.4 |
+|-----|-------|-----------|
+| Portfolio | – | `brick:Portfolio` |
+| Building | `IfcBuilding` | `brick:Building` |
+| Floor | `IfcBuildingStorey` | `brick:Floor` |
+| Room | `IfcSpace` | `brick:Room` subclass by usage (e.g. `brick:Conference_Room`) |
+| Zone | `IfcZone` | `brick:Zone` |
+| Sensor (temperature, CO₂, RH, lux, noise…) | `IfcSensor` + `IfcSensorTypeEnum` | `brick:*_Sensor` + QUDT unit |
+| `IEQRequirements` | `Pset_SpaceThermalRequirements`, `Pset_SpaceLightingRequirements`, `Pset_SpaceOccupancyRequirements`, `HVX_Pset_SpaceIEQRequirements` | `ieq:IEQRequirement` |
+| `IEQAssessment` | `HVX_Pset_IEQAssessment` | `ieq:IEQAssessment` |
+
+New fields on every `SpatialEntity`: `ifc_guid`, `brick_class` (optional
+override), `ieq_requirements`; plus `ifc_class` and `semantic_brick_class()`.
+
+**IEQ extension.** Brick has no notion of requirements, assessments or comfort
+categories, and lacks some IEQ-relevant classes. `core/semantics/ontology/hvx_ieq.ttl`
+adds them (`ieq:Classroom`, `ieq:Patient_Room`, `ieq:Sound_Pressure_Level_Sensor`,
+`ieq:IEQAssessment`, `ieq:Category_I…IV`, …) as subclasses of Brick classes, so
+plain Brick tools still understand the data. Links to IFC and time series use
+Brick's own `ref:IFCReference` / `ref:TimeseriesReference`.
+
+```python
+from core.semantics.brick import export_brick, import_brick
+from core.semantics.ifc import load_ifc, write_ieq_to_ifc   # pip install "hvx[ifc]"
+
+ttl = export_brick(portfolio, buildings, floors, rooms, "out/model.ttl")
+model = load_ifc("building.ifc")              # IfcSpace → Room, GUIDs kept
+write_ieq_to_ifc("building.ifc", model.rooms, assessments, output_path="building_ieq.ifc")
+```
+
+API: `GET /api/semantics/brick`, `POST /api/semantics/brick/import`, `POST /api/semantics/ifc/import`.
+
+All mappings are checked in the tests against the official Brick 1.4 ontology
+and the IFC4 schema.
+
+## 🧪 Tests
+
+```bash
+pip install -e ".[dev,api]"
+pytest -q
+```
+
 ## 🎨 Key Design Principles
 
 ### 1. **Scalability**

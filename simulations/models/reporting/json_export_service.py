@@ -209,7 +209,7 @@ class JSONExportService:
                 
                 # Summary statistics
                 "statistics": {
-                    "total_buildings": len(portfolio.building_ids),
+                    "total_buildings": len(buildings),
                     "total_rooms": len(rooms),
                     "total_area_m2": sum(b.area_m2 for b in buildings.values() if b.area_m2),
                 },

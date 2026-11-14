@@ -6,6 +6,7 @@ with domain-specific methods, aggregation capabilities, and self-analysis.
 """
 
 from __future__ import annotations
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable
 from pydantic import Field
@@ -14,7 +15,15 @@ from .spacial_entity import SpatialEntity
 from .energy import EnergyConversionService, EnergyUse
 from .enums import SpatialEntityType, VentilationType, EnergyCarrier
 from .metering import EnergyMeter, AggregatedEnergyData
-from simulations.models.real_epc import calculate_epc_rating
+
+logger = logging.getLogger(__name__)
+
+
+def calculate_epc_rating(*args: Any, **kwargs: Any) -> Any:
+    """Lazy proxy: importing simulations at module load created an import cycle."""
+    from simulations.models.real_epc import calculate_epc_rating as _calculate
+
+    return _calculate(*args, **kwargs)
 
 
 # ============================================================
@@ -399,7 +408,7 @@ class Portfolio(SpatialEntity):
                         window_area_m2=window_area_m2,
                     )
                 except Exception as e:
-                    print(f"Warning: Could not compute simulations for building {building_id}: {e}")
+                    logger.warning(f"Could not compute simulations for building {building_id}: {e}")
 
         # Aggregate building simulation results
         building_sim_results = []
@@ -867,7 +876,7 @@ class Building(SpatialEntity):
                 if primary_energy is not None:
                     results['primary_energy_kwh_m2'] = primary_energy
             except Exception as e:
-                print(f"Warning: Could not compute energy metrics: {e}")
+                logger.warning(f"Could not compute energy metrics: {e}")
 
         # Compute EN16798 aggregation from floors and rooms
         if 'en16798' in metrics:
@@ -878,7 +887,7 @@ class Building(SpatialEntity):
                 if en16798_results:
                     results['en16798'] = en16798_results
             except Exception as e:
-                print(f"Warning: Could not compute EN16798 metrics: {e}")
+                logger.warning(f"Could not compute EN16798 metrics: {e}")
                 import traceback
                 traceback.print_exc()
                 results['en16798_error'] = str(e)
@@ -1249,7 +1258,7 @@ class Building(SpatialEntity):
                         window_area_m2=window_area_m2,
                     )
                 except Exception as e:
-                    print(f"Warning: Could not compute simulations for room {room_id}: {e}")
+                    logger.warning(f"Could not compute simulations for room {room_id}: {e}")
 
         # Aggregate room simulation results
         room_sim_results = []
@@ -1577,10 +1586,7 @@ class Floor(SpatialEntity):
         # Get registry to access standard configs
         registry = get_registry()
         
-        print(f"DEBUG Floor.compute_standards() for floor {self.id}")
-        print(f"  child_ids: {self.child_ids}")
-        print(f"  child_rooms collected: {len(child_rooms)}")
-        print(f"  standards in registry: {list(registry.standards.keys())}")
+        logger.debug("Floor %s: %d child rooms, standards=%s", self.id, len(child_rooms), list(registry.standards.keys()))
         
         # Aggregate results for each standard
         for standard_id, standard_config in registry.standards.items():
@@ -1588,7 +1594,7 @@ class Floor(SpatialEntity):
             
             # Check if this standard should aggregate to floor level
             aggregate_to_types = aggregation_config.get('aggregate_to_types', [])
-            print(f"  Standard {standard_id}: aggregate_to_types={aggregate_to_types}")
+            logger.debug("Standard %s aggregates to %s", standard_id, aggregate_to_types)
             
             if 'floor' not in aggregate_to_types:
                 continue
@@ -1610,10 +1616,10 @@ class Floor(SpatialEntity):
                         child_weights.append(weight)
             
             if not child_results:
-                print(f"    No child results for {standard_id}")
+                logger.debug("No child results for %s", standard_id)
                 continue
             
-            print(f"    Aggregating {len(child_results)} results for {standard_id}")
+            logger.debug("Aggregating %d results for %s", len(child_results), standard_id)
             
             # Apply aggregation based on config
             aggregated_result = self._aggregate_standard_results(
@@ -1666,7 +1672,7 @@ class Floor(SpatialEntity):
                         window_area_m2=window_area_m2,
                     )
                 except Exception as e:
-                    print(f"Warning: Could not compute simulations for room {room_id}: {e}")
+                    logger.warning(f"Could not compute simulations for room {room_id}: {e}")
 
         # Aggregate room simulation results
         room_sim_results = []
@@ -2020,8 +2026,12 @@ class Room(SpatialEntity):
         """
         from .standards_registry import get_registry
         
-        if not force_recompute and 'standards_results' in self.computed_metrics:
-            return self.computed_metrics['standards_results']
+        # Cache per season: a single cache slot made a second call with a
+        # different season silently return the first season's results.
+        season_cache = self.computed_metrics.setdefault('standards_results_by_season', {})
+        if not force_recompute and season in season_cache:
+            self.computed_metrics['standards_results'] = season_cache[season]
+            return season_cache[season]
 
         # Persist inferred building type for downstream standards (TAIL uses it for schedules)
         if building_type and not self.building_type:
@@ -2031,6 +2041,7 @@ class Room(SpatialEntity):
         
         if not self.has_data:
             self.computed_metrics['standards_results'] = results
+            season_cache[season] = results
             return results
         
         # Get the registry
@@ -2101,13 +2112,13 @@ class Room(SpatialEntity):
                 self.metadata[f'{standard_key}_analysis'] = summary
                 
             except Exception as e:
-                print(f"Warning: Could not run standard {standard_config.id}: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.warning("Could not run standard %s for %s: %s", standard_config.id, self.id, e)
+                logger.debug("Standard failure details", exc_info=True)
                 results[f'{standard_config.id}_error'] = str(e)
         
         # Cache results
         self.computed_metrics['standards_results'] = results
+        season_cache[season] = results
         return results
 
     def compute_simulations(
@@ -2173,7 +2184,7 @@ class Room(SpatialEntity):
                 if df_data:
                     df = pd.DataFrame(df_data)
         except Exception as e:
-            print(f"Warning: Could not build DataFrame for {self.name}: {e}")
+            logger.warning(f"Could not build DataFrame for {self.name}: {e}")
 
         # Store raw objects temporarily for inter-simulation dependencies
         raw_results = {}
@@ -2255,7 +2266,7 @@ class Room(SpatialEntity):
                     ]
 
             except Exception as e:
-                print(f"Warning: Could not run simulation {simulation_config.id}: {e}")
+                logger.warning(f"Could not run simulation {simulation_config.id}: {e}")
                 results[f'{simulation_config.id}_error'] = str(e)
 
         # Cache results

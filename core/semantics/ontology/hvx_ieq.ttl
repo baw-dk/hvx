@@ -1,0 +1,171 @@
+@prefix brick: <https://brickschema.org/schema/Brick#> .
+@prefix ieq:   <https://brunoadam.eu/ns/hvx/ieq#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# ---------------------------------------------------------------------------
+# HVX IEQ extension to Brick 1.4
+#
+# Brick models *what exists* (spaces, equipment, points). It has no notion of
+# an IEQ requirement, an assessment against a standard, or comfort
+# categories, and lacks several space and sensor types relevant to indoor
+# environmental quality. This vocabulary adds exactly those, as subclasses of
+# Brick classes wherever possible, so a plain Brick consumer still
+# understands the instance data.
+# ---------------------------------------------------------------------------
+
+ieq: a owl:Ontology ;
+    rdfs:label "HVX Indoor Environmental Quality extension for Brick" ;
+    owl:imports <https://brickschema.org/schema/1.4/Brick> ;
+    owl:versionInfo "1.0.0" .
+
+# --- Space types missing from Brick ----------------------------------------
+
+ieq:Classroom a owl:Class ;
+    rdfs:subClassOf brick:Room ;
+    rdfs:label "Classroom" ;
+    skos:definition "Teaching room; EN 16798-1 default occupancy density and pollution load differ from offices." .
+
+ieq:Lecture_Hall a owl:Class ;
+    rdfs:subClassOf ieq:Classroom ;
+    rdfs:label "Lecture Hall" .
+
+ieq:Cleanroom a owl:Class ;
+    rdfs:subClassOf brick:Laboratory ;
+    rdfs:label "Cleanroom" .
+
+ieq:Patient_Room a owl:Class ;
+    rdfs:subClassOf brick:Medical_Room ;
+    rdfs:label "Patient Room" ;
+    skos:definition "Room for sensitive occupants; typically targets EN 16798-1 Category I." .
+
+ieq:Operating_Room a owl:Class ;
+    rdfs:subClassOf brick:Medical_Room ;
+    rdfs:label "Operating Room" .
+
+ieq:Guest_Room a owl:Class ;
+    rdfs:subClassOf brick:Room ;
+    rdfs:label "Guest Room" .
+
+ieq:Dwelling a owl:Class ;
+    rdfs:subClassOf brick:Room ;
+    rdfs:label "Dwelling" ;
+    skos:definition "Residential unit treated as one IEQ space." .
+
+# --- Sensors / quantities missing from Brick --------------------------------
+
+ieq:Sound_Pressure_Level a owl:Class ;
+    rdfs:label "Sound Pressure Level" ;
+    skos:definition "Equivalent continuous sound pressure level. Weighting given by ieq:frequencyWeighting." .
+
+ieq:Sound_Pressure_Level_Sensor a owl:Class ;
+    rdfs:subClassOf brick:Sensor ;
+    rdfs:label "Sound Pressure Level Sensor" ;
+    brick:hasQuantity ieq:Sound_Pressure_Level .
+
+ieq:frequencyWeighting a owl:DatatypeProperty ;
+    rdfs:domain ieq:Sound_Pressure_Level_Sensor ;
+    rdfs:range xsd:string ;
+    rdfs:label "frequency weighting" ;
+    skos:definition "Acoustic frequency weighting, e.g. \"A\" for dB(A)." .
+
+# --- Comfort categories -----------------------------------------------------
+
+ieq:ComfortCategory a owl:Class ;
+    rdfs:label "Comfort Category" ;
+    skos:definition "Level of expectation for the indoor environment (EN 16798-1 categories I-IV)." .
+
+ieq:Category_I a ieq:ComfortCategory ; rdfs:label "Category I" ; ieq:rank 1 .
+ieq:Category_II a ieq:ComfortCategory ; rdfs:label "Category II" ; ieq:rank 2 .
+ieq:Category_III a ieq:ComfortCategory ; rdfs:label "Category III" ; ieq:rank 3 .
+ieq:Category_IV a ieq:ComfortCategory ; rdfs:label "Category IV" ; ieq:rank 4 .
+
+ieq:rank a owl:DatatypeProperty ;
+    rdfs:domain ieq:ComfortCategory ;
+    rdfs:range xsd:integer .
+
+# --- Standards --------------------------------------------------------------
+
+ieq:Standard a owl:Class ;
+    rdfs:label "IEQ Standard" .
+
+ieq:EN16798-1 a ieq:Standard ; rdfs:label "EN 16798-1" .
+ieq:TAIL a ieq:Standard ; rdfs:label "TAIL rating scheme" .
+ieq:BR18 a ieq:Standard ; rdfs:label "Danish Building Regulations BR18" .
+
+# --- Requirements -----------------------------------------------------------
+
+ieq:IEQRequirement a owl:Class ;
+    rdfs:label "IEQ Requirement" ;
+    skos:definition "Target indoor-environment levels for a space. Aligns with IFC Pset_SpaceThermalRequirements, Pset_SpaceLightingRequirements and HVX_Pset_SpaceIEQRequirements." .
+
+ieq:hasRequirement a owl:ObjectProperty ;
+    rdfs:domain brick:Location ;
+    rdfs:range ieq:IEQRequirement .
+
+ieq:targetCategory a owl:ObjectProperty ;
+    rdfs:range ieq:ComfortCategory .
+
+ieq:temperatureMin a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "°C" .
+ieq:temperatureMax a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "°C" .
+ieq:humidityMin a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "%RH" .
+ieq:humidityMax a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "%RH" .
+ieq:co2Max a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "ppm" .
+ieq:illuminanceMin a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "lx" .
+ieq:soundPressureLevelMax a owl:DatatypeProperty ; rdfs:range xsd:decimal ; rdfs:comment "dB(A)" .
+ieq:designOccupancy a owl:DatatypeProperty ; rdfs:range xsd:integer ; rdfs:comment "persons" .
+
+# --- Assessments ------------------------------------------------------------
+
+ieq:IEQAssessment a owl:Class ;
+    rdfs:label "IEQ Assessment" ;
+    skos:definition "Evaluation of measured conditions in a space against a standard over a period." .
+
+ieq:hasAssessment a owl:ObjectProperty ;
+    rdfs:domain brick:Location ;
+    rdfs:range ieq:IEQAssessment ;
+    owl:inverseOf ieq:assesses .
+
+ieq:assesses a owl:ObjectProperty ;
+    rdfs:domain ieq:IEQAssessment ;
+    rdfs:range brick:Location .
+
+ieq:accordingTo a owl:ObjectProperty ;
+    rdfs:domain ieq:IEQAssessment ;
+    rdfs:range ieq:Standard .
+
+ieq:achievedCategory a owl:ObjectProperty ;
+    rdfs:domain ieq:IEQAssessment ;
+    rdfs:range ieq:ComfortCategory .
+
+ieq:season a owl:DatatypeProperty ; rdfs:range xsd:string .
+ieq:periodStart a owl:DatatypeProperty ; rdfs:range xsd:dateTime .
+ieq:periodEnd a owl:DatatypeProperty ; rdfs:range xsd:dateTime .
+ieq:compliancePercent a owl:DatatypeProperty ; rdfs:range xsd:decimal ;
+    skos:definition "Share of assessed time meeting the target category, in percent." .
+ieq:ieqScore a owl:DatatypeProperty ; rdfs:range xsd:decimal ;
+    skos:definition "HVX composite IEQ score 0-100 (weighted parameter compliance)." .
+
+ieq:ParameterResult a owl:Class ;
+    rdfs:label "Parameter Result" ;
+    skos:definition "Assessment result for one measured quantity." .
+
+ieq:hasParameterResult a owl:ObjectProperty ;
+    rdfs:domain ieq:IEQAssessment ;
+    rdfs:range ieq:ParameterResult .
+
+ieq:quantity a owl:ObjectProperty ;
+    rdfs:domain ieq:ParameterResult ;
+    rdfs:comment "QUDT / Brick quantity kind, e.g. brick:CO2_Concentration." .
+
+ieq:basedOnPoint a owl:ObjectProperty ;
+    rdfs:domain ieq:ParameterResult ;
+    rdfs:range brick:Point .
+
+ieq:meanValue a owl:DatatypeProperty ; rdfs:range xsd:decimal .
+ieq:minValue a owl:DatatypeProperty ; rdfs:range xsd:decimal .
+ieq:maxValue a owl:DatatypeProperty ; rdfs:range xsd:decimal .
