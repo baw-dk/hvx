@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  hygiene:
+    name: License headers and versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: MPL-2.0 notice on every source file
+        run: python scripts/license_headers.py --check
+      - name: Package and integration versions in step
+        run: python scripts/check_versions.py
+
   library:
     name: Library (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
