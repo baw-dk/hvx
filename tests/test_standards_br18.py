@@ -55,3 +55,15 @@ def test_br18_allowance_is_per_year_not_per_season():
     assert room.br18_pass is False
     assert any("26 °C" in name for name in room.br18_failed)
     assert room.exceedance_hours["temperature>26"] == pytest.approx(160.0)
+
+
+def test_hours_consistent_between_issues_br18_and_recommendations():
+    """Occupied-only data must not give each day's last sample the gap to the next morning."""
+    entities = _room_with_hot_hours(0, 150)
+    config = ReportConfig(seasons=("winter", "summer"), occupancy=OccupancySchedule(start="08:00", end="16:00"),
+                          parallel_backend="serial")
+    room = ReportBuilder(config).build(*entities).rooms[0]
+    assert room.exceedance_hours["temperature>26"] == pytest.approx(150.0)
+    rec = next(r for r in room.recommendations if r["key"] in ("summer_overheating", "solar_shading"))
+    assert rec["evidence"]["hours_above_26"] == pytest.approx(150.0)
+    assert room.br18_pass is False
