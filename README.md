@@ -195,6 +195,14 @@ adds a logo, accent colour and company details incl. CVR number (`src/hvx/report
 
 The old `hvx.simulations.models.reporting.HTMLReportService` still works and now delegates to this pipeline.
 
+### 🏷️ TAIL label web app
+
+`web/` is a page that turns one CSV with a year of measurements into a TAIL label and a
+BAW-branded sticker (SVG/PNG), for offices, hotels and schools. It runs `hvx.tail_label`
+from this repository in the browser with Pyodide, so files never leave the visitor's
+machine. Published from `main` by `.github/workflows/web.yml`, meant for
+`https://app.brunoadam.eu/hvx/`; see [web/README.md](web/README.md).
+
 ### 🤖 Building reports with an AI assistant (MCP)
 
 `hvx mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server, so an

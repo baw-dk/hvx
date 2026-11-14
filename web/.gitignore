@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# vendored by `npm run vendor` (Pyodide runtime, wheels, hvx wheel)
+public/pyodide/
+public/py/
+e2e-output/
