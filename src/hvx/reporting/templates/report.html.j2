@@ -70,6 +70,13 @@
   footer { margin-top: 48px; color: var(--muted); font-size: 12px; }
   .intro p { margin: 0 0 10px; max-width: 75ch; }
   svg.tail { display: block; max-width: 100%; height: auto; }
+  .tail-net-fig { margin: 0; }
+  .tail-net-fig figcaption { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .building-page h2 { margin-top: 0; }
+  .building-page .bp-grid { display: grid; grid-template-columns: minmax(220px, 280px) 1fr; gap: 24px; align-items: start; }
+  .building-page .bp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .building-page .bp-stats .kpi .value { font-size: 22px; }
+  @media (max-width: 640px) { .building-page .bp-grid { grid-template-columns: 1fr; } }
   .tail-row { display: flex; flex-wrap: wrap; gap: 20px 28px; align-items: flex-end; }
   .tail-row figure { margin: 0; text-align: center; }
   .tail-row figcaption { font-size: 12.5px; color: var(--muted); margin-top: 6px; max-width: 220px; margin-inline: auto; }
@@ -190,12 +197,16 @@
 {% if s.tail %}
 <h2>{{ _("TAIL rating") }}</h2>
 <div class="card">
+  {% if report.buildings | selectattr("summary.tail") | list | length > 1 %}
+  <figure class="tail-net-fig">
+    <figcaption><strong>{{ report.portfolio_name }}</strong> · {{ _("Typical room (hvx summary)") }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
+    {{ tail_network(s.tail, report.buildings | selectattr("summary.tail") | list, title=report.portfolio_name) }}
+  </figure>
+  {% else %}
   <div class="tail-row">
     <figure class="tail-main">{{ tail_chart(s.tail, 280) }}<figcaption><strong>{{ report.portfolio_name }}</strong><br>{{ _("Typical room (hvx summary)") }}<br>{{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption></figure>
-    {% for b in report.buildings %}{% if b.summary.tail and report.buildings | length > 1 %}
-    <figure>{{ tail_chart(b.summary.tail, 200) }}<figcaption><strong>{{ b.building_name }}</strong><br>{{ _("{n} rooms", n=b.summary.tail.get("rooms", 0)) }}</figcaption></figure>
-    {% endif %}{% endfor %}
   </div>
+  {% endif %}
   {% set tail_buildings = report.buildings | selectattr("summary.tail") | list %}
   {% if tail_buildings | length > 1 %}
   <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the typical room (hvx summary: rounded mean of the rooms' TAIL ratings, not a TAIL building rating). Bars below: how the rooms are spread over I–IV.") }}</p>
@@ -214,7 +225,7 @@
   </table>
   </div>
   {% endif %}
-  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read each circle from the outside in: the outer ring shows the measured parameters, the middle ring the four domains (each takes its worst parameter) and the centre the overall rating (the worst domain). For a group of rooms the circle shows the typical room, an hvx summary: each parameter is the rounded mean of the rooms' TAIL ratings. It is not a TAIL building rating, which TAIL derives from the pooled data of all rooms. Grey: not measured (hover for the parameters), so the domain is not rated.") }}</p>
+  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. The network shows each building with its four domain ratings (T, A, I, L). On each building's page, read the circle from the outside in: the outer ring shows the measured parameters, the middle ring the four domains (each takes its worst parameter) and the centre the overall rating (the worst domain). For a group of rooms the circle shows the typical room, an hvx summary: each parameter is the rounded mean of the rooms' TAIL ratings. It is not a TAIL building rating, which TAIL derives from the pooled data of all rooms. Grey: not measured (hover for the parameters), so the domain is not rated.") }}</p>
 </div>
 {% endif %}
 
@@ -253,7 +264,7 @@
     <tr>
       <td><strong>{{ b.building_name }}</strong><div class="muted small">{{ [b.building_type and _(b.building_type), b.city] | select | join(" · ") }}</div></td>
       <td class="num" data-v="{{ b.summary.rooms_analysed }}">{{ b.summary.rooms_analysed }}/{{ b.summary.rooms_total }}</td>
-      <td data-v="{{ b.summary.category or 'Z' }}">{% if b.summary.category %}<span class="cat cat-{{ b.summary.category }}">{{ b.summary.category }}</span>{% else %}<span class="cat cat-none">&lt;IV</span>{% endif %}</td>
+      <td data-v="{{ b.summary.category or 'Z' }}">{% if b.summary.category %}<span class="cat cat-{{ b.summary.category }}">{{ b.summary.category }}</span>{% else %}<span class="cat cat-none">–</span>{% endif %}</td>
       <td class="num" data-v="{{ b.summary.meets_target_pct if b.summary.meets_target_pct is not none else -1 }}">{{ b.summary.meets_target_pct | pct(0) }}</td>
       <td class="num {{ b.summary.ieq_score | level }}" data-v="{{ b.summary.ieq_score if b.summary.ieq_score is not none else -1 }}">{{ b.summary.ieq_score | num }}</td>
       {% for p in ["temperature", "co2", "humidity"] %}
@@ -285,6 +296,32 @@
   </tbody>
 </table>
 {% endmacro %}
+{% if report.buildings | length > 1 %}
+{% for b in report.buildings if b.summary.rooms_analysed %}
+<section class="building-page page-break" style="margin-top:40px">
+  <h2>{{ b.building_name }}</h2>
+  <div class="card">
+    <div class="bp-grid">
+      {% if b.summary.tail %}<figure class="tail-main" style="margin:0;text-align:center">{{ tail_chart(b.summary.tail, 260) }}<figcaption class="muted small">TAIL · {{ _("Typical room (hvx summary)") }}</figcaption></figure>{% else %}<div></div>{% endif %}
+      <div>
+        <div class="bp-stats">
+          <div class="card kpi"><div class="value">{{ b.summary.rooms_analysed }}</div><div class="label">{{ _("Rooms") }}</div></div>
+          <div class="card kpi"><div class="value">{{ b.summary.ieq_score | num }}</div><div class="label">{{ _("IEQ score (0–100)") }}</div></div>
+          <div class="card kpi"><div class="value">{% if b.summary.category %}<span class="cat cat-{{ b.summary.category }}">{{ b.summary.category }}</span>{% else %}–{% endif %}</div><div class="label">{{ _("Category") }}</div></div>
+          <div class="card kpi"><div class="value">{{ b.summary.meets_target_pct | pct(0) }}</div><div class="label">{{ _("Rooms meeting Category {cat}", cat=cfg.target_category) }}</div></div>
+          {% set h = b.summary.exceedance_hours.get("co2>1000") %}{% if h is not none %}<div class="card kpi"><div class="value">{{ h | num(0) }} {{ unit_h }}</div><div class="label">CO₂ &gt; 1000 ppm</div></div>{% endif %}
+          {% set h = b.summary.exceedance_hours.get("temperature>26") %}{% if h is not none %}<div class="card kpi"><div class="value">{{ h | num(0) }} {{ unit_h }}</div><div class="label">{{ _("Temperature") }} &gt; 26 °C</div></div>{% endif %}
+        </div>
+        {% if b.actions %}
+        <h3 style="margin-top:18px">{{ _("Priority actions") }}</h3>
+        <ul class="findings">{% for a in b.actions %}<li><span class="prio-{{ a.priority }}">{{ _(a.priority | capitalize) }}</span> · <strong>{{ a.title }}</strong> ({{ _("{n} rooms", n=(a.room_ids | length)) }}){% if a.expected_benefit %}<div class="muted small">{{ a.expected_benefit }}</div>{% endif %}</li>{% endfor %}</ul>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endfor %}
+{% endif %}
 {% set hour_cols = profile_columns(report, "co2>1000_pct_by_hour") %}
 {% set month_cols = profile_columns(report, "co2>1000_pct_by_month") %}
 {% set temp_cols = profile_columns(report, "temperature>26_h_by_month") %}

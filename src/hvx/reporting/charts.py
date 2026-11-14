@@ -399,6 +399,73 @@ def tail_tree(tail: dict, language: str = "en", na: str = "not measured", width:
             f'style="max-width:{width}px">{"".join(parts)}</svg>')
 
 
+def tail_network(portfolio: dict, buildings: Sequence[tuple], language: str = "en", title: str = "",
+                 rooms_label: str = "{n} rooms", width: int = 640) -> str:
+    """
+    Portfolio -> buildings as a network: the portfolio's TAIL rating on the left, a link to each
+    building (name, number of rooms, rating), and the building's four domain ratings (T, A, I,
+    L) as chips. ``buildings``: ``(name, tail dict)`` pairs; tail dicts as from ``typical_tail``.
+    """
+    import uuid
+    from html import escape
+
+    domain_labels = TAIL_DOMAIN_LABELS.get(language, TAIL_DOMAIN_LABELS["en"])
+    letters = {"thermal": "T", "acoustic": "A", "iaq": "I", "luminous": "L"}
+    row_h, gap, pad = 46.0, 12.0, 10.0
+    root_x, root_r = 44.0, 36.0
+    b_x, b_w, b_h = 140.0, 250.0, 40.0
+    chip_x0, chip_w, chip_gap = b_x + b_w + 28.0, 46.0, 8.0
+    n = max(len(buildings), 1)
+    height = pad * 2 + n * row_h + (n - 1) * gap
+    root_y = height / 2
+    uid = "tailnet-" + uuid.uuid4().hex[:8]
+
+    def color(r):
+        return TAIL_COLORS.get(r, TAIL_COLORS[None])
+
+    def ink(r):
+        return TAIL_TEXT.get(r, TAIL_TEXT[None])
+
+    links, nodes = [], []
+    for i, (name, tail) in enumerate(buildings):
+        tail = tail or {}
+        y = pad + i * (row_h + gap) + row_h / 2
+        rating = tail.get("overall")
+        mx = (root_x + root_r + b_x) / 2
+        links.append(f'<path d="M{root_x + root_r - 2:.1f},{root_y:.1f} C{mx:.1f},{root_y:.1f} {mx:.1f},{y:.1f} {b_x + 2:.1f},{y:.1f}" '
+                     f'fill="none" stroke="{color(rating)}" stroke-width="3" stroke-linecap="round"/>')
+        rooms = tail.get("rooms")
+        sub = rooms_label.format(n=rooms) if rooms is not None else ""
+        nodes.append(
+            f'<g><title>{escape(str(name))}: TAIL {escape(rating or "–")}</title>'
+            f'<rect x="{b_x}" y="{y - b_h / 2:.1f}" width="{b_w}" height="{b_h}" rx="{b_h / 2}" fill="{color(rating)}"/>'
+            f'<text x="{b_x + 16}" y="{y - 5:.1f}" dominant-baseline="central" font-size="12.5" font-weight="650" fill="{ink(rating)}">{escape(str(name))}</text>'
+            f'<text x="{b_x + 16}" y="{y + 9:.1f}" dominant-baseline="central" font-size="10" fill="{ink(rating)}" opacity="0.85">{escape(sub)}</text>'
+            f'<text x="{b_x + b_w - 16}" y="{y + 1:.1f}" text-anchor="end" dominant-baseline="central" font-size="16" font-weight="750" fill="{ink(rating)}">{rating or "–"}</text></g>'
+        )
+        links.append(f'<line x1="{b_x + b_w}" y1="{y:.1f}" x2="{chip_x0 + 4 * chip_w + 3 * chip_gap}" y2="{y:.1f}" stroke="#d5d9de" stroke-width="2"/>')
+        for j, key in enumerate(TAIL_ORDER):
+            r = (tail.get("domains") or {}).get(key)
+            cx0 = chip_x0 + j * (chip_w + chip_gap)
+            nodes.append(
+                f'<g><title>{escape(domain_labels[key])}: {escape(r or "–")}</title>'
+                f'<rect x="{cx0:.1f}" y="{y - 13:.1f}" width="{chip_w}" height="26" rx="13" fill="{color(r)}" stroke="#ffffff" stroke-width="2"/>'
+                f'<text x="{cx0 + chip_w / 2:.1f}" y="{y + 0.5:.1f}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="700" fill="{ink(r)}">'
+                f'{letters[key]} {r or "–"}</text></g>'
+            )
+    overall = (portfolio or {}).get("overall")
+    root = (f'<g><title>{escape(title)}: TAIL {escape(overall or "–")}</title>'
+            f'<circle cx="{root_x}" cy="{root_y:.1f}" r="{root_r + 3}" fill="#ffffff"/>'
+            f'<circle cx="{root_x}" cy="{root_y:.1f}" r="{root_r}" fill="{color(overall)}"/>'
+            f'<text x="{root_x}" y="{root_y - 13:.1f}" text-anchor="middle" font-size="8" font-weight="600" letter-spacing=".08em" fill="{ink(overall)}">'
+            f'{escape(domain_labels["overall"].upper())}</text>'
+            f'<text x="{root_x}" y="{root_y + 7:.1f}" text-anchor="middle" dominant-baseline="central" font-size="22" font-weight="750" fill="{ink(overall)}">{overall or "–"}</text></g>')
+    total_w = max(width, chip_x0 + 4 * chip_w + 3 * chip_gap + 4)
+    return (f'<svg class="chart tail-network" id="{uid}" viewBox="0 0 {total_w:.0f} {height:.0f}" role="img" '
+            f'aria-label="TAIL {overall or "–"}" font-family="Inter, system-ui, -apple-system, \'Segoe UI\', Roboto, sans-serif" '
+            f'style="max-width:{total_w:.0f}px">{"".join(links)}{root}{"".join(nodes)}</svg>')
+
+
 def _worst_rating(ratings) -> "str | None":
     order = ("I", "II", "III", "IV")
     ratings = [r for r in ratings if r in order]
@@ -410,4 +477,4 @@ def tail_colors(rating) -> Tuple[str, str]:
     return TAIL_COLORS.get(rating, TAIL_COLORS[None]), TAIL_TEXT.get(rating, TAIL_TEXT[None])
 
 
-__all__ = ["stacked_bar", "category_bar", "histogram", "meter", "tail_sunburst", "tail_tree", "tail_colors", "TAIL_ORDER", "CATEGORY_COLORS", "CATEGORY_LABELS", "TAIL_COLORS"]
+__all__ = ["stacked_bar", "category_bar", "histogram", "meter", "tail_sunburst", "tail_tree", "tail_network", "tail_colors", "TAIL_ORDER", "CATEGORY_COLORS", "CATEGORY_LABELS", "TAIL_COLORS"]
