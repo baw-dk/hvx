@@ -22,6 +22,9 @@ All notable changes to this project are documented here. The format follows
   sleeping hours (22–06), offices 09–17 (predicTAIL). Adaptive temperature bands (TAIL Table 2)
   for buildings without mechanical cooling. Buildings are rated from their rooms as the sources
   prescribe (paper Eq. 1; schools: mean of the classrooms' domain ratings).
+- TAIL label web app (`web/`): React + shadcn/ui in the BAW design system; runs hvx in the
+  browser with Pyodide (no upload, no third-party requests); label sticker as SVG/PNG; English
+  and Danish; GitHub Pages workflow with an end-to-end test.
 - `hvx.tail_label`: TAIL label from one CSV of measurements (column detection in English and
   Danish, decimal commas, outdoor temperature for the adaptive bands, spot values).
 - Occupancy schedules can span midnight (e.g. hotel sleeping hours).

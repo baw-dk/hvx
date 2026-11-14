@@ -252,7 +252,9 @@ def assess(
         "not_rated": dict(result.not_rated),
         "extensions": {p.parameter: p.rating_label for p in result.extensions},
         "coverage": cov,
-        "occupied": {"description": schedule.describe(), "hours": round(float(_durations(frame.index)[mask].sum()), 0),
+        "occupied": {"description": schedule.describe(), "start": schedule.start, "end": schedule.end,
+                     "weekdays": list(schedule.weekdays), "all_hours": bool(schedule.always),
+                     "hours": round(float(_durations(frame.index)[mask].sum()), 0),
                      "samples": int(len(occupied)), "building_type": building_type, "country": country},
         "warnings": warnings,
     }
