@@ -55,7 +55,7 @@ jobs:
         with:
           name: e2e-screenshots
           path: web/e2e-output/
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request'
         with:
           path: web/dist
