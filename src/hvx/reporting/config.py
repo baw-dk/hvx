@@ -60,6 +60,10 @@ class ReportConfig:
     target_category: str = "II"
     default_country: str = "DK"
     default_building_type: str = "office"
+    # Buildings without mechanical cooling are assessed with the EN 16798-1 adaptive model
+    # outside the heating season (needs outdoor temperature). None: per building
+    # (metadata "mechanical_cooling"), else fixed cooling-season ranges.
+    mechanical_cooling: Optional[bool] = None
 
     include_simulations: bool = True
     temperature_band: Tuple[float, float] = (20.0, 24.0)  # used by what-if scenarios

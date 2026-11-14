@@ -122,3 +122,39 @@ def test_legacy_timeseries_compliance_runs_and_ignores_gaps():
     )
     assert result["I"]["compliance_rate"] == pytest.approx(100.0)
     assert result["II"]["compliance_rate"] == pytest.approx(100.0)
+
+
+def test_adaptive_limits_follow_en16798_formula():
+    lower, upper = EN16798Calculator.adaptive_limits(EN16798Category.CATEGORY_I, 20.0)
+    assert (round(float(lower), 1), round(float(upper), 1)) == (22.4, 27.4)  # asymmetric: -3 / +2 K
+    lower, upper = EN16798Calculator.adaptive_limits(EN16798Category.CATEGORY_III, 20.0)
+    assert (round(float(lower), 1), round(float(upper), 1)) == (20.4, 29.4)
+    # below the validity range each limit is held at its end (upper from 10 °C, lower from 15 °C)
+    lower, upper = EN16798Calculator.adaptive_limits(EN16798Category.CATEGORY_II, 8.0)
+    assert (round(float(lower), 2), round(float(upper), 2)) == (round(0.33 * 15 + 14.8, 2), round(0.33 * 10 + 21.8, 2))
+
+
+def _summer_room(cooling):
+    from hvx.reporting import ReportBuilder, ReportConfig
+    from tests.conftest import make_portfolio
+
+    p, b, f, rooms = make_portfolio(n_buildings=1, n_rooms=1)
+    idx = pd.date_range("2024-05-01", "2024-09-30 23:00", freq="h")
+    room = next(iter(rooms.values()))
+    room.timestamps = [t.isoformat() for t in idx]
+    room.timeseries_data = {"temperature": [22.0] * len(idx), "co2": [600.0] * len(idx)}
+    building = next(iter(b.values()))
+    out = pd.date_range("2024-04-01", "2024-09-30 23:00", freq="h")  # a month before, for the running mean
+    building.metadata = {**(building.metadata or {}), "climate_data": {"outdoor_temperature": {
+        "timestamps": [t.isoformat() for t in out], "values": [15.0] * len(out)}}}
+    config = ReportConfig(seasons=("summer",), mechanical_cooling=cooling, parallel_backend="serial", include_simulations=False)
+    return ReportBuilder(config).build(p, b, f, rooms).rooms[0]
+
+
+def test_free_running_building_uses_adaptive_model_in_summer():
+    """22 °C with a running mean of 15 °C: Category I by the adaptive model (20.75-25.75 °C);
+    Category III by the fixed cooling-season ranges (Cat II starts at 23 °C)."""
+    adaptive = _summer_room(False)
+    assert adaptive.seasons[0].adaptive and adaptive.achieved_category == "I"
+    fixed = _summer_room(None)
+    assert not fixed.seasons[0].adaptive and fixed.achieved_category == "III"

@@ -367,57 +367,40 @@ class EN16798Calculator:
             return cls.TEMP_COOLING[category].copy()
         return cls.TEMP_HEATING[category].copy()
 
+    # EN 16798-1 Annex B.2.2 adaptive limits around theta_c = 0.33 * theta_rm + 18.8:
+    # upper +2 / +3 / +4 K (valid for 10 <= theta_rm <= 30 °C), lower -3 / -4 / -5 K
+    # (valid for 15 <= theta_rm <= 30 °C). Outside those ranges hvx holds each limit at the
+    # end of its range (an hvx convention); above 30 °C the fixed ranges are used.
+    ADAPTIVE_OFFSETS = {
+        EN16798Category.CATEGORY_I: (3.0, 2.0),
+        EN16798Category.CATEGORY_II: (4.0, 3.0),
+        EN16798Category.CATEGORY_III: (5.0, 4.0),
+    }
+
+    @classmethod
+    def adaptive_limits(cls, category: EN16798Category, running_mean):
+        """(lower, upper) adaptive limits for scalars or numpy/pandas arrays of theta_rm."""
+        below, above = cls.ADAPTIVE_OFFSETS[category]
+        rm = np.asarray(running_mean, dtype=float)
+        upper = 0.33 * np.clip(rm, 10.0, 30.0) + 18.8 + above
+        lower = 0.33 * np.clip(rm, 15.0, 30.0) + 18.8 - below
+        return lower, upper
+
     @classmethod
     def _get_adaptive_temperature_thresholds(
         cls,
         category: EN16798Category,
         outdoor_running_mean_temp: float,
     ) -> Dict[str, Any]:
-        """Calculate adaptive comfort thresholds."""
+        """Adaptive comfort limits for one running mean outdoor temperature (EN 16798-1 B.2.2)."""
         t_comf = 0.33 * outdoor_running_mean_temp + 18.8
-
-        if PYTHERMALCOMFORT_AVAILABLE and adaptive_en is not None:
-            try:
-                result = adaptive_en(
-                    tdb=t_comf,
-                    tr=t_comf,
-                    t_running_mean=outdoor_running_mean_temp,
-                    v=0.1,
-                )
-
-                def to_scalar(val: Any) -> float:
-                    if isinstance(val, (list, np.ndarray)):
-                        return float(val[0]) if len(val) > 0 else 0.0
-                    return float(val)
-
-                if category == EN16798Category.CATEGORY_I:
-                    lower = to_scalar(result.tmp_cmf_cat_i_low)
-                    upper = to_scalar(result.tmp_cmf_cat_i_up)
-                elif category == EN16798Category.CATEGORY_II:
-                    lower = to_scalar(result.tmp_cmf_cat_ii_low)
-                    upper = to_scalar(result.tmp_cmf_cat_ii_up)
-                elif category == EN16798Category.CATEGORY_III:
-                    lower = to_scalar(result.tmp_cmf_cat_iii_low)
-                    upper = to_scalar(result.tmp_cmf_cat_iii_up)
-                else:
-                    deviation = cls.ADAPTIVE_TEMP_DEVIATION[category]
-                    lower = t_comf - deviation
-                    upper = t_comf + deviation
-
-                return {
-                    "lower": round(lower, 1),
-                    "upper": round(upper, 1),
-                    "design": round(to_scalar(result.tmp_cmf), 1),
-                    "outdoor_running_mean": round(outdoor_running_mean_temp, 1),
-                    "adaptive_model": True,
-                }
-            except Exception:
-                pass
-
-        deviation = cls.ADAPTIVE_TEMP_DEVIATION[category]
+        if category not in cls.ADAPTIVE_OFFSETS:  # Category IV: outside III
+            lower, upper = cls.adaptive_limits(EN16798Category.CATEGORY_III, outdoor_running_mean_temp)
+        else:
+            lower, upper = cls.adaptive_limits(category, outdoor_running_mean_temp)
         return {
-            "lower": round(t_comf - deviation, 1),
-            "upper": round(t_comf + deviation, 1),
+            "lower": round(float(lower), 1),
+            "upper": round(float(upper), 1),
             "design": round(t_comf, 1),
             "outdoor_running_mean": round(outdoor_running_mean_temp, 1),
             "adaptive_model": True,
@@ -725,51 +708,23 @@ class EN16798Calculator:
         temperature: pd.Series,
         running_mean_series: pd.Series,
         category: EN16798Category,
-        season: str = "heating",
+        season: str = "cooling",
     ) -> pd.Series:
         """
-        Calculate temperature compliance using adaptive model with time-varying thresholds.
-
-        Each hourly indoor temperature is evaluated against the adaptive thresholds
-        calculated from that day's outdoor running mean temperature.
-
-        Args:
-            temperature: Indoor temperature series
-            running_mean_series: Outdoor running mean temperature series (daily values forward-filled)
-            category: EN16798 category to evaluate
-            season: Season for non-adaptive fallback
-
-        Returns:
-            Boolean series indicating compliance at each timestamp
+        Per sample: within the category's adaptive limits for that day's running mean outdoor
+        temperature. Where the running mean is unknown or above 30 °C the fixed ranges for the
+        season apply. Category IV (outside III) has no limits: always True.
         """
-        compliant = pd.Series([True] * len(temperature), index=temperature.index)
-
-        for idx in temperature.index:
-            if idx not in running_mean_series.index:
-                compliant[idx] = False
-                continue
-
-            t_rm = running_mean_series[idx]
-            t_indoor = temperature[idx]
-
-            # Check if adaptive model is applicable (10-30°C range)
-            if pd.isna(t_rm) or t_rm < 10.0 or t_rm > 30.0:
-                # Fallback to non-adaptive thresholds
-                if season.lower() == "heating":
-                    thresholds = cls.TEMP_HEATING[category]
-                else:
-                    thresholds = cls.TEMP_COOLING[category]
-            else:
-                # Use adaptive thresholds based on this timestamp's running mean
-                thresholds = cls._get_adaptive_temperature_thresholds(category, t_rm)
-
-            # Check compliance
-            if pd.isna(t_indoor):
-                compliant[idx] = False
-            else:
-                compliant[idx] = (t_indoor >= thresholds["lower"]) and (t_indoor <= thresholds["upper"])
-
-        return compliant
+        if category == EN16798Category.CATEGORY_IV:
+            return pd.Series(True, index=temperature.index)
+        rm = running_mean_series.reindex(temperature.index, method="ffill") if len(running_mean_series) else pd.Series(np.nan, index=temperature.index)
+        lower, upper = cls.adaptive_limits(category, rm.to_numpy())
+        fixed = cls.TEMP_HEATING[category] if season.lower() == "heating" else cls.TEMP_COOLING[category]
+        use_fixed = rm.isna().to_numpy() | (rm.to_numpy() > 30.0)
+        lower = np.where(use_fixed, fixed["lower"], lower)
+        upper = np.where(use_fixed, fixed["upper"], upper)
+        t = temperature.to_numpy(dtype=float)
+        return pd.Series((t >= lower) & (t <= upper), index=temperature.index)
 
     @classmethod
     def assess_detailed_timeseries(
@@ -785,6 +740,8 @@ class EN16798Calculator:
         categories_to_check: Optional[List[EN16798Category]] = None,
         category_thresholds: Optional[Dict[EN16798Category, float]] = None,
         include_humidity: bool = True,
+        free_running: bool = False,
+        outdoor_daily_mean: Optional[pd.Series] = None,
     ) -> EN16798DetailedResult:
         """
         Perform comprehensive EN 16798-1 analysis with detailed metrics.
@@ -805,17 +762,30 @@ class EN16798Calculator:
         outdoor_running_mean_single = None
         can_use_adaptive = False
 
-        if outdoor_temperature is not None and len(outdoor_temperature) > 0:
+        if outdoor_daily_mean is not None and len(outdoor_daily_mean.dropna()) > 0:
+            # Full daily means (all hours), so the running mean is not biased by the assessed
+            # (occupied, daytime) slice; computed day by day from the preceding days.
+            daily = outdoor_daily_mean.dropna().sort_index()
+            running_mean_series = cls.calculate_running_mean_timeseries(daily.resample("h").ffill())
+            outdoor_running_mean_single = cls.calculate_running_mean_outdoor_temp(daily.tolist())
+            can_use_adaptive = (
+                (free_running or ventilation_type in [VentilationType.NATURAL, VentilationType.MIXED_MODE])
+                and season.lower() != "heating"
+            )
+        elif outdoor_temperature is not None and len(outdoor_temperature) > 0:
             running_mean_series = cls.calculate_running_mean_timeseries(outdoor_temperature)
             # Also calculate single value for backward compatibility and metadata
             daily_temps = outdoor_temperature.resample("D").mean().dropna().tolist()
             outdoor_running_mean_single = cls.calculate_running_mean_outdoor_temp(daily_temps)
 
             # Check if adaptive model can be used
+            # Adaptive model: buildings without mechanical cooling (free-running) outside the
+            # heating season; the fixed heating-season ranges apply while heating operates.
             can_use_adaptive = (
-                ventilation_type in [VentilationType.NATURAL, VentilationType.MIXED_MODE]
+                (free_running or ventilation_type in [VentilationType.NATURAL, VentilationType.MIXED_MODE])
+                and season.lower() != "heating"
                 and running_mean_series is not None
-                and len(running_mean_series) > 0
+                and running_mean_series.notna().any()
             )
 
         if occupancy_mask is not None:
@@ -1326,11 +1296,21 @@ def run(
 
     # Humidity counts for the category only in humidity-controlled rooms (metadata flag
     # "humidity_controlled"; EN 16798-1's RH ranges are for dimensioning (de)humidification).
-    include_humidity = bool((getattr(spatial_entity, "metadata", None) or {}).get("humidity_controlled", False))
+    meta = getattr(spatial_entity, "metadata", None) or {}
+    include_humidity = bool(meta.get("humidity_controlled", False))
+    # No mechanical cooling (metadata mechanical_cooling: false): EN 16798-1 adaptive model
+    # outside the heating season, if outdoor temperature is available.
+    free_running = meta.get("mechanical_cooling") is False
+    outdoor_daily_mean = None
+    if isinstance(meta.get("outdoor_daily_mean_temperature"), dict):
+        daily = meta["outdoor_daily_mean_temperature"]
+        outdoor_daily_mean = pd.Series(list(daily.values()), index=pd.to_datetime(list(daily.keys())), dtype=float)
 
     # Use detailed timeseries assessment for comprehensive metrics
     detailed_result = calculator.assess_detailed_timeseries(
         include_humidity=include_humidity,
+        free_running=free_running,
+        outdoor_daily_mean=outdoor_daily_mean,
         temperature=ts_data.get('temperature'),
         co2=ts_data.get('co2'),
         humidity=ts_data.get('humidity'),

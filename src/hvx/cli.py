@@ -67,6 +67,41 @@ def cli(verbose: int) -> None:
 
 
 
+
+@cli.group()
+def dmi() -> None:
+    """Danish weather data from DMI's open data API (no key)."""
+
+
+@dmi.command("stations")
+@click.option("--near", required=True, help="LAT,LON, e.g. 55.66,12.27")
+@click.option("--param", "parameter", default="mean_temp", show_default=True)
+@click.option("-n", default=5, show_default=True)
+def dmi_stations(near: str, parameter: str, n: int) -> None:
+    """List the climate stations nearest to a point."""
+    from hvx.connectors.dmi import nearest_stations
+
+    lat, lon = (float(x) for x in near.split(","))
+    click.echo(nearest_stations(lat, lon, parameter, n).to_string(index=False))
+
+
+@dmi.command("fetch")
+@click.option("--station", required=True, help="DMI station id, e.g. 06170")
+@click.option("--param", "parameters", multiple=True, default=("mean_temp", "mean_radiation"), show_default=True)
+@click.option("--from", "start", required=True, help="Start date (UTC), e.g. 2023-12-01 (a month early for running means)")
+@click.option("--to", "end", required=True, help="End date (UTC), inclusive")
+@click.option("--name", default=None, help="Station name written to the file")
+@click.option("-o", "--output", type=click.Path(dir_okay=False), required=True)
+def dmi_fetch(station, parameters, start, end, name, output) -> None:
+    """Fetch hourly climate data into a file usable as a building's climate_file."""
+    from hvx.connectors.dmi import fetch_climate_data, write_dmi_csv
+
+    data = fetch_climate_data(station, parameters, start, end)
+    if data.empty:
+        raise click.ClickException("DMI returned no values for that station, parameters and period.")
+    path = write_dmi_csv(data, output, name)
+    click.echo(f"Wrote {len(data)} values ({', '.join(sorted(data.parameter.unique()))}) to {path}. Data: DMI.")
+
 @cli.command("mcp")
 @click.option("--transport", type=click.Choice(["stdio", "streamable-http"]), default="stdio", show_default=True)
 def mcp_command(transport: str) -> None:
