@@ -16,7 +16,7 @@ Thanks for helping! This guide covers what a pull request needs.
 ## Development setup
 
 ```bash
-git clone https://github.com/Koto-Labs/hvx && cd hvx
+git clone https://github.com/baw-dk/hvx && cd hvx
 python -m venv .venv && . .venv/bin/activate     # Python 3.10–3.13
 pip install -e ".[dev]"
 pytest -q                                         # library tests

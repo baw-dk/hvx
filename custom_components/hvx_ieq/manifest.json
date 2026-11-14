@@ -8,10 +8,10 @@
   "dependencies": [
     "recorder"
   ],
-  "documentation": "https://github.com/Koto-Labs/hvx",
+  "documentation": "https://github.com/baw-dk/hvx",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/Koto-Labs/hvx/issues",
+  "issue_tracker": "https://github.com/baw-dk/hvx/issues",
   "requirements": [
     "hvx==0.3.0"
   ],

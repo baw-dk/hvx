@@ -15,9 +15,15 @@ It appears in three places, kept in step by `scripts/check_versions.py` (CI):
 3. Open a release pull request; CI must be green (tests, Home Assistant tests,
    hassfest, HACS, license headers, versions).
 4. After merge, tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. `.github/workflows/release.yml` builds the sdist and wheel and publishes them
-   to PyPI (repository secret `PYPI_API_TOKEN`).
-6. Create a GitHub release for the tag with the changelog section. HACS offers
+5. `.github/workflows/release.yml` checks that the tag matches the version, builds
+   the sdist and wheel and publishes them to PyPI with **trusted publishing** (no
+   stored token), then creates the GitHub release with the files attached.
+
+   One-time setup: on pypi.org, *Your account → Publishing → Add a new pending
+   publisher*: project `hvx`, owner `baw-dk`, repository `hvx`, workflow
+   `release.yml`, environment `pypi`. On GitHub, *Settings → Environments → New
+   environment* `pypi` (optionally require a reviewer, so every upload needs a click).
+6. Paste the changelog section into the GitHub release notes. HACS offers
    the integration update from GitHub releases; Home Assistant then installs the
    matching `hvx` version from PyPI.
 

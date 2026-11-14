@@ -23,7 +23,7 @@ This summary is for convenience; the numbered sections below are the agreement.
   lists or any other communication with the Maintainer about the Project, except
   material You clearly mark as "Not a Contribution" when submitting it.
 - **"Project"** means the HVX software and documentation maintained by the
-  Maintainer, currently at https://github.com/Koto-Labs/hvx, including its
+  Maintainer, currently at https://github.com/baw-dk/hvx, including its
   successors and derivatives.
 - **"Submit"** means any form of electronic, verbal or written communication sent
   to the Maintainer or the Project's public repositories and trackers.
