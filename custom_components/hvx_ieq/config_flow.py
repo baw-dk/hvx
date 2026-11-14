@@ -15,7 +15,6 @@ from homeassistant.helpers import selector
 
 from .const import (
     BUILDING_TYPES,
-    CATEGORIES,
     CONF_AREAS,
     CONF_BUILDING_TYPE,
     CONF_ROOMS,
@@ -29,14 +28,15 @@ from .const import (
     DOMAIN,
     PARAMETER_DEVICE_CLASSES,
     PARAMETER_LABELS,
+    TARGET_OPTIONS,
 )
 from .discovery import area_infos, candidate_sensors, detect_rooms
 
 
 def _settings_schema(defaults: dict[str, Any]) -> dict:
     return {
-        vol.Required(CONF_TARGET_CATEGORY, default=defaults.get(CONF_TARGET_CATEGORY, DEFAULT_TARGET_CATEGORY)): selector.SelectSelector(
-            selector.SelectSelectorConfig(options=CATEGORIES, mode=selector.SelectSelectorMode.LIST, translation_key="target_category")
+        vol.Required(CONF_TARGET_CATEGORY, default=_target_option(defaults.get(CONF_TARGET_CATEGORY))): selector.SelectSelector(
+            selector.SelectSelectorConfig(options=list(TARGET_OPTIONS), mode=selector.SelectSelectorMode.LIST, translation_key="target_category")
         ),
         vol.Required(CONF_WINDOW_DAYS, default=defaults.get(CONF_WINDOW_DAYS, DEFAULT_WINDOW_DAYS)): selector.NumberSelector(
             selector.NumberSelectorConfig(min=1, max=30, step=1, unit_of_measurement="d", mode=selector.NumberSelectorMode.BOX)
@@ -45,6 +45,16 @@ def _settings_schema(defaults: dict[str, Any]) -> dict:
             selector.NumberSelectorConfig(min=5, max=240, step=5, unit_of_measurement="min", mode=selector.NumberSelectorMode.BOX)
         ),
     }
+
+
+def _target_option(value: Any) -> str:
+    """Stored value (option or legacy "II") -> selector option."""
+    if value is None:
+        return DEFAULT_TARGET_CATEGORY
+    value = str(value)
+    if value.lower() in TARGET_OPTIONS:
+        return value.lower()
+    return next((k for k, v in TARGET_OPTIONS.items() if v == value.upper()), DEFAULT_TARGET_CATEGORY)
 
 
 def _areas_schema(default: list[str]) -> vol.Schema:

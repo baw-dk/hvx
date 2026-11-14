@@ -9,6 +9,7 @@ import re
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from .analysis import PARAMETER_LABELS, _weighted
+from .i18n import Translator
 from .config import ReportConfig
 from .model import CATEGORIES, IEQ_PARAMETERS, ActionItem, BuildingReport, GroupSummary, RoomReport
 
@@ -65,6 +66,13 @@ def summarize(rooms: Sequence[RoomReport], config: ReportConfig) -> GroupSummary
     for r in analysed:
         if r.ieq_score is not None:
             s.score_histogram[min(int(r.ieq_score // 10), 9)] += 1
+    for name in sorted({k for r in analysed for k in r.profiles}):
+        buckets: Dict[int, List[float]] = {}
+        for r in analysed:
+            for k, v in (r.profiles.get(name) or {}).items():
+                if v is not None:
+                    buckets.setdefault(int(k), []).append(v)
+        s.profiles[name] = {k: round(sum(v) / len(v), 1) for k, v in sorted(buckets.items())}
     keys = sorted({k for r in analysed for k in r.exceedance_hours})
     for key in keys:
         values = [r.exceedance_hours[key] for r in analysed if key in r.exceedance_hours]
@@ -87,13 +95,17 @@ def _generic_title(rec: dict, room_name: str) -> str:
     return re.sub(rf"\s+(in|for)\s+{re.escape(room_name)}\s*$", "", title).strip() or title
 
 
-def group_actions(rooms: Iterable[RoomReport], limit: int) -> List[ActionItem]:
-    """Merge per-room recommendations into portfolio/building actions."""
+def group_actions(rooms: Iterable[RoomReport], limit: int, qualify: bool = False) -> List[ActionItem]:
+    """Merge per-room recommendations into portfolio/building actions.
+
+    ``qualify`` prefixes room names with their building (portfolio level, where
+    room names like "11" are ambiguous across buildings).
+    """
     groups: Dict[tuple, ActionItem] = {}
     severity: Dict[tuple, tuple] = {}
     for r in rooms:
         for rec in r.recommendations:
-            title = _generic_title(rec, r.room_name)
+            title = rec.get("action") or _generic_title(rec, r.room_name)
             key = (rec.get("type"), title)
             priority = str(rec.get("priority", "low")).lower()
             item = groups.get(key)
@@ -101,7 +113,7 @@ def group_actions(rooms: Iterable[RoomReport], limit: int) -> List[ActionItem]:
                 item = groups[key] = ActionItem(type=str(rec.get("type")), title=title, priority=priority)
             if r.room_id not in item.room_ids:
                 item.room_ids.append(r.room_id)
-                item.room_names.append(r.room_name)
+                item.room_names.append(f"{r.building_name} {r.room_name}" if qualify and r.building_name else r.room_name)
             rank = (_PRIORITY.get(priority, 3), r.ieq_score if r.ieq_score is not None else 101.0)
             if key not in severity or rank < severity[key]:
                 severity[key] = rank
@@ -117,40 +129,39 @@ def highlights(
     buildings: Sequence[BuildingReport],
     config: ReportConfig,
 ) -> List[str]:
+    t = Translator(config.language)
     s = portfolio_summary
     out: List[str] = []
-    out.append(
-        f"{s.rooms_analysed} of {s.rooms_total} rooms analysed ({s.coverage_pct:g}% coverage)"
-        + (f", {s.area_analysed_m2:,.0f} m²." if s.area_analysed_m2 else ".")
-    )
+    line = t("{n} of {total} rooms analysed ({pct} coverage)", n=s.rooms_analysed, total=s.rooms_total, pct=t.pct(s.coverage_pct, 0))
+    if s.area_analysed_m2:
+        line += t(", {area} m²", area=t.num(s.area_analysed_m2, 0))
+    out.append(line + ".")
     if s.meets_target_pct is not None:
-        out.append(f"{s.meets_target_pct:g}% of rated rooms meet the Category {config.target_category} target.")
+        out.append(t("{pct} of rated rooms meet the Category {cat} target.", pct=t.pct(s.meets_target_pct, 0), cat=config.target_category))
     if s.category:
-        share = round(config.group_category_threshold * 100)
-        out.append(f"Portfolio category {s.category}: at least {share}% of rooms reach Category {s.category} or better.")
+        out.append(t("Portfolio category {cat}: at least {pct} of rooms reach Category {cat} or better.",
+                     cat=s.category, pct=t.pct(config.group_category_threshold * 100, 0)))
     params = {p: v for p, v in s.compliance.items() if v is not None}
     if len(params) > 1:
         weakest = min(params, key=params.get)
-        out.append(
-            f"{PARAMETER_LABELS.get(weakest, weakest)} is the weakest parameter: rooms are within "
-            f"Category {config.target_category} limits {params[weakest]:g}% of the time on average."
-        )
+        out.append(t("{label} is the weakest parameter: rooms are within Category {cat} limits {pct} of the time on average.",
+                     label=t(PARAMETER_LABELS.get(weakest, weakest)), cat=config.target_category, pct=t.pct(params[weakest])))
     if "co2>1000" in s.exceedance_hours:
-        line = f"Rooms are above 1000 ppm CO₂ for {s.exceedance_hours['co2>1000']:,.0f} occupied hours on average"
+        line = t("Rooms are above 1000 ppm CO₂ for {hours} occupied hours on average", hours=t.num(s.exceedance_hours["co2>1000"], 0))
         if s.exceedance_hours.get("co2>2000"):
-            line += f" and above 2000 ppm for {s.exceedance_hours['co2>2000']:,.0f} hours"
+            line += t(" and above 2000 ppm for {hours} hours", hours=t.num(s.exceedance_hours["co2>2000"], 0))
         out.append(line + ".")
     if "temperature>26" in s.exceedance_hours:
-        out.append(f"Rooms are above 26 °C for {s.exceedance_hours['temperature>26']:,.0f} occupied hours on average (BR18 allows 100 h).")
+        out.append(t("Rooms are above 26 °C for {hours} occupied hours on average (BR18 allows 100 h).",
+                     hours=t.num(s.exceedance_hours["temperature>26"], 0)))
     scored = [b for b in buildings if b.summary.ieq_score is not None]
     if len(scored) > 1:
         worst = min(scored, key=lambda b: b.summary.ieq_score)
-        out.append(f"Lowest-scoring building: {worst.building_name} (IEQ score {worst.summary.ieq_score:g}).")
+        out.append(t("Lowest-scoring building: {name} (IEQ score {score}).", name=worst.building_name, score=t.num(worst.summary.ieq_score)))
     problems = s.rooms_without_data + s.rooms_failed
     if problems:
-        out.append(
-            f"{problems} room(s) could not be assessed ({s.rooms_without_data} without data, {s.rooms_failed} failed)."
-        )
+        out.append(t("{n} room(s) could not be assessed ({no_data} without data, {failed} failed).",
+                     n=problems, no_data=s.rooms_without_data, failed=s.rooms_failed))
     return out
 
 

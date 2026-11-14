@@ -162,6 +162,16 @@ Assessing 24/7 instead (`occupied_only=False`) lets nights and holidays dilute
 the results: on a 58-classroom dataset it raised CO₂ compliance from 73% to 94%
 and inflated hours above 26 °C tenfold (empty, sun-heated summer holidays).
 
+**Languages and PDF.** `ReportConfig(language="da")` renders the whole report in
+Danish (Danish number formats, translated recommendations); add a client
+`introduction` and method `notes`. Write `report.pdf` as well as `.html` with
+`pip install "hvx[pdf]"` and `playwright install chromium` (or point
+`HVX_CHROMIUM_PATH` at an existing Chromium):
+
+```bash
+hvx report --csv data/ --lang da -o rapport.html -o rapport.pdf
+```
+
 What the report contains: KPIs, key findings, category distribution, IEQ-score
 histogram, priority actions merged across rooms, a building table, detailed
 cards for the rooms furthest from target, a sortable/filterable table of all

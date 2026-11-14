@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ report.portfolio_name }} – IEQ report</title>
+<title>{{ report.portfolio_name }} – {{ _("IEQ report") }}</title>
 <style>
   :root {
     --bg: #f6f7f9; --surface: #ffffff; --text: #111827; --muted: #5b6472; --border: #e3e6ea;
@@ -59,87 +59,119 @@
   .rec { border-left: 3px solid var(--accent); padding: 6px 10px; margin: 8px 0; background: var(--bg); border-radius: 4px; }
   .filter { width: 100%; max-width: 320px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); margin-bottom: 10px; }
   footer { margin-top: 48px; color: var(--muted); font-size: 12px; }
+  .intro p { margin: 0 0 10px; max-width: 75ch; }
+  .heat { border-collapse: separate; border-spacing: 2px; font-size: 11.5px; }
+  .heat th { text-transform: none; letter-spacing: 0; text-align: center; padding: 2px 4px; font-size: 11px; }
+  .heat th.rowh { text-align: left; white-space: nowrap; font-weight: 500; color: var(--text); }
+  .heat td { text-align: center; padding: 5px 4px; border-radius: 3px; border: 0; min-width: 34px; }
+  .heat tr.group th.rowh { font-weight: 700; }
+  .heat-0 { background: var(--lvl-1-bg); } .heat-1 { background: var(--lvl-2-bg); } .heat-2 { background: var(--lvl-3-bg); } .heat-3 { background: var(--lvl-4-bg); }
+  .heat-na { background: transparent; color: var(--muted); }
+  .heat-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .heat-legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: -2px; background: var(--c); }
+  @page { size: A4; margin: 14mm 12mm 16mm; }
   @media print {
-    body { background: #fff; } .filter, details > summary { display: none; }
-    .card, .table-wrap { break-inside: avoid; }
-    h2 { break-after: avoid; }
+    :root { --bg: #fff; --surface: #fff; --text: #111827; --muted: #4b5563; --border: #d9dde3;
+            --lvl-1-bg: #dcfce7; --lvl-2-bg: #ecfccb; --lvl-3-bg: #fef3c7; --lvl-4-bg: #fee2e2; --meter-bg: #e5e7eb; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; font-size: 10.5px; }
+    main { max-width: none; padding: 0; }
+    h1 { font-size: 22px; } h2 { font-size: 15px; margin: 22px 0 8px; break-after: avoid; } h3 { font-size: 12.5px; }
+    .filter, details > summary, footer { display: none; }
+    .card, .kpi, tr, .heat { break-inside: avoid; }
+    /* Room cards may run across pages; keep their blocks whole instead. */
+    .card.room-card { break-inside: auto; }
+    .room-card header, .room-card .issues, .room-card .scroll, .rec { break-inside: avoid; }
+    .heat td { padding: 3px 4px; }
+    td.where { min-width: 190px; }
+    .table-wrap { overflow: visible; }
+    .kpis { grid-template-columns: repeat(5, 1fr); }
+    .grid2 { grid-template-columns: 1fr 1fr; }
+    .page-break { break-before: page; }
+    th, td { padding: 5px 6px; }
   }
 </style>
 </head>
 <body>
 <main>
 <header>
-  <div class="muted small">Indoor environmental quality report</div>
+  <div class="muted small">{{ _("Indoor environmental quality report") }}</div>
   <h1>{{ report.portfolio_name }}</h1>
   <div class="muted">
-    {{ cfg.seasons | length > 1 and "Full year (" ~ (cfg.seasons | map("capitalize") | join(" + ")) ~ ")" or (cfg.seasons[0] | replace("_", " ") | capitalize) }}
-    · Target: EN 16798-1 Category {{ cfg.target_category }}
+    {% if cfg.seasons | length > 1 %}{{ _("Full year ({seasons})", seasons=(cfg.seasons | map("translate") | map("capitalize") | join(" + "))) }}{% else %}{{ _(cfg.seasons[0]) | capitalize }}{% endif %}
+    · {{ _("Target: EN 16798-1 Category {cat}", cat=cfg.target_category) }}
     {% set occ = (report.rooms | selectattr("occupancy") | map(attribute="occupancy") | unique | list) %}
-    {% if occ | length == 1 %}· Assessed: {{ occ[0] }}{% endif %}
-    · Generated {{ report.generated_at | date }}
+    {% if occ | length == 1 %}· {{ _("Assessed: {hours}", hours=occ[0]) }}{% endif %}
+    · {{ _("Generated {date}", date=(report.generated_at | date)) }}
   </div>
 </header>
 
-<section class="kpis" aria-label="Key figures">
-  <div class="card kpi"><div class="value">{{ s.ieq_score | num }}</div><div class="label">IEQ score (0–100)</div></div>
-  <div class="card kpi"><div class="value">{{ s.meets_target_pct | pct(0) }}</div><div class="label">Rooms meeting Category {{ cfg.target_category }}</div></div>
-  <div class="card kpi"><div class="value">{% if s.category %}<span class="cat cat-{{ s.category }}">{{ s.category }}</span>{% else %}–{% endif %}</div><div class="label">Portfolio category ({{ (cfg.group_category_threshold * 100) | round | int }}% rule)</div></div>
-  <div class="card kpi"><div class="value">{{ s.rooms_analysed }}<span class="muted" style="font-size:16px"> / {{ s.rooms_total }}</span></div><div class="label">Rooms analysed ({{ s.coverage_pct | pct(0) }} coverage)</div></div>
-  <div class="card kpi"><div class="value">{{ report.buildings | length }}</div><div class="label">Buildings</div></div>
+{% if cfg.introduction %}
+<section class="intro" style="margin-top:18px">
+  {% for para in cfg.introduction.split("\n\n") %}<p>{{ para }}</p>{% endfor %}
+</section>
+{% endif %}
+
+<section class="kpis" aria-label="{{ _('Key figures') }}">
+  <div class="card kpi"><div class="value">{{ s.ieq_score | num }}</div><div class="label">{{ _("IEQ score (0–100)") }}</div></div>
+  <div class="card kpi"><div class="value">{{ s.meets_target_pct | pct(0) }}</div><div class="label">{{ _("Rooms meeting Category {cat}", cat=cfg.target_category) }}</div></div>
+  <div class="card kpi"><div class="value">{% if s.category %}<span class="cat cat-{{ s.category }}">{{ s.category }}</span>{% else %}<span class="cat cat-none">&lt;IV</span>{% endif %}</div><div class="label">{{ _("Portfolio category ({pct}% rule)", pct=((cfg.group_category_threshold * 100) | round | int)) }}</div></div>
+  <div class="card kpi"><div class="value">{{ s.rooms_analysed }}<span class="muted" style="font-size:16px"> / {{ s.rooms_total }}</span></div><div class="label">{{ _("Rooms analysed ({pct} coverage)", pct=(s.coverage_pct | pct(0))) }}</div></div>
+  <div class="card kpi"><div class="value">{{ report.buildings | length }}</div><div class="label">{{ _("Buildings") }}</div></div>
 </section>
 
 {% if report.highlights %}
-<h2>Key findings</h2>
+<h2>{{ _("Key findings") }}</h2>
 <div class="card"><ul class="findings">{% for h in report.highlights %}<li>{{ h }}</li>{% endfor %}</ul></div>
 {% endif %}
 
-<h2>Portfolio overview</h2>
+<h2>{{ _("Portfolio overview") }}</h2>
 <div class="grid2">
   <div class="card">
-    <h3>Rooms by achieved category</h3>
+    <h3>{{ _("Rooms by achieved category") }}</h3>
     {{ category_bar(s.category_counts) }}
     <div class="legend">
       {% for c in ["I", "II", "III", "IV", "none"] %}
-      <span><i class="cat-{{ c }}"></i>{{ CATEGORY_LABELS[c] }}: {{ s.category_counts[c] }}</span>
+      <span><i class="cat-{{ c }}"></i>{{ category_label(c) }}: {{ s.category_counts[c] }}</span>
       {% endfor %}
     </div>
     {% if s.exceedance_hours %}
-    <h3 style="margin-top:16px">Average hours per room above limits (occupied time)</h3>
+    <h3 style="margin-top:16px">{{ _("Average hours per room above limits (occupied time)") }}</h3>
     <table class="small">
       {% for key, hours in s.exceedance_hours.items() %}
       {% set p, lim = key.split(">") %}
-      <tr><td>{{ param_label(p) }} &gt; {{ lim }} {{ "ppm" if p == "co2" else "°C" }}</td><td class="num">{{ hours | num(0, "h") }}</td></tr>
+      <tr><td>{{ param_label(p) }} &gt; {{ lim }} {{ "ppm" if p == "co2" else "°C" }}</td><td class="num">{{ hours | num(0, unit_h) }}</td></tr>
       {% endfor %}
     </table>
     {% endif %}
-    <h3 style="margin-top:16px">Time within Category {{ cfg.target_category }} limits</h3>
+    <h3 style="margin-top:16px">{{ _("Time within Category {cat} limits", cat=cfg.target_category) }}</h3>
     <table class="small">
       {% for p, v in s.compliance.items() %}
       <tr><td>{{ param_label(p) }}</td><td class="num">{{ v | pct }} {{ meter(v) }}</td></tr>
       {% else %}
-      <tr><td class="muted">No parameter data.</td></tr>
+      <tr><td class="muted">{{ _("No parameter data.") }}</td></tr>
       {% endfor %}
     </table>
   </div>
   <div class="card">
-    <h3>Distribution of room IEQ scores</h3>
+    <h3>{{ _("Distribution of room IEQ scores") }}</h3>
     {{ histogram(s.score_histogram) }}
-    <p class="muted small">Each bar counts rooms by composite score (0 = never within limits, 100 = always).</p>
+    <p class="muted small">{{ _("Each bar counts rooms by composite score (0 = never within limits, 100 = always).") }}</p>
   </div>
 </div>
 
 {% if report.actions %}
-<h2>Priority actions</h2>
+<h2>{{ _("Priority actions") }}</h2>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Priority</th><th>Action</th><th class="num">Rooms</th><th>Where</th><th>Expected benefit (worst case)</th></tr></thead>
+  <thead><tr><th>{{ _("Priority") }}</th><th>{{ _("Action") }}</th><th class="num">{{ _("Rooms") }}</th><th>{{ _("Where") }}</th><th>{{ _("Expected benefit (worst case)") }}</th></tr></thead>
   <tbody>
   {% for a in report.actions %}
     <tr>
-      <td class="prio-{{ a.priority }}">{{ a.priority | capitalize }}</td>
+      <td class="prio-{{ a.priority }}">{{ _(a.priority | capitalize) }}</td>
       <td><strong>{{ a.title }}</strong>{% if a.description %}<div class="muted small">{{ a.description }}</div>{% endif %}</td>
       <td class="num">{{ a.room_ids | length }}</td>
-      <td class="small">{{ a.room_names[:6] | join(", ") }}{% if a.room_names | length > 6 %} and {{ a.room_names | length - 6 }} more{% endif %}</td>
+      <td class="small where">{{ a.room_names[:6] | join(", ") }}{% if a.room_names | length > 6 %} {{ _("and {n} more", n=(a.room_names | length - 6)) }}{% endif %}</td>
       <td class="small">{{ a.expected_benefit or "–" }}</td>
     </tr>
   {% endfor %}
@@ -148,22 +180,22 @@
 </div>
 {% endif %}
 
-<h2>Buildings</h2>
+<h2>{{ _("Buildings") }}</h2>
 <div class="table-wrap">
 <table class="sortable">
   <thead><tr>
-    <th data-sort="text">Building</th><th data-sort="num" class="num">Rooms</th><th data-sort="text">Category</th>
-    <th data-sort="num" class="num">Meets target</th><th data-sort="num" class="num">Score</th>
-    <th data-sort="num" class="num">Temp.</th><th data-sort="num" class="num">CO₂</th><th data-sort="num" class="num">RH</th>
-    <th data-sort="num" class="num" title="Average hours per room above 1000 ppm during occupied time">CO₂&gt;1000 h</th>
-    <th style="min-width:160px">Category mix</th>
+    <th data-sort="text">{{ _("Building") }}</th><th data-sort="num" class="num">{{ _("Rooms") }}</th><th data-sort="text">{{ _("Category") }}</th>
+    <th data-sort="num" class="num">{{ _("Meets target") }}</th><th data-sort="num" class="num">{{ _("Score") }}</th>
+    <th data-sort="num" class="num">{{ _("Temp.") }}</th><th data-sort="num" class="num">CO₂</th><th data-sort="num" class="num">{{ _("RH") }}</th>
+    <th data-sort="num" class="num" title="{{ _('Average hours per room above 1000 ppm during occupied time') }}">CO₂&gt;1000 {{ unit_h }}</th>
+    <th style="min-width:160px">{{ _("Category mix") }}</th>
   </tr></thead>
   <tbody>
   {% for b in report.buildings %}
     <tr>
-      <td><strong>{{ b.building_name }}</strong><div class="muted small">{{ [b.building_type, b.city] | select | join(" · ") }}</div></td>
+      <td><strong>{{ b.building_name }}</strong><div class="muted small">{{ [b.building_type and _(b.building_type), b.city] | select | join(" · ") }}</div></td>
       <td class="num" data-v="{{ b.summary.rooms_analysed }}">{{ b.summary.rooms_analysed }}/{{ b.summary.rooms_total }}</td>
-      <td data-v="{{ b.summary.category or 'Z' }}">{% if b.summary.category %}<span class="cat cat-{{ b.summary.category }}">{{ b.summary.category }}</span>{% else %}–{% endif %}</td>
+      <td data-v="{{ b.summary.category or 'Z' }}">{% if b.summary.category %}<span class="cat cat-{{ b.summary.category }}">{{ b.summary.category }}</span>{% else %}<span class="cat cat-none">&lt;IV</span>{% endif %}</td>
       <td class="num" data-v="{{ b.summary.meets_target_pct if b.summary.meets_target_pct is not none else -1 }}">{{ b.summary.meets_target_pct | pct(0) }}</td>
       <td class="num {{ b.summary.ieq_score | level }}" data-v="{{ b.summary.ieq_score if b.summary.ieq_score is not none else -1 }}">{{ b.summary.ieq_score | num }}</td>
       {% for p in ["temperature", "co2", "humidity"] %}
@@ -180,28 +212,72 @@
 </div>
 
 {% set worst = report.worst_rooms %}
+{% macro heatmap(key, columns, col_label, kind) %}
+<table class="heat">
+  <thead><tr><th></th>{% for c in columns %}<th>{{ col_label(c) }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for b in report.buildings %}{% set prof = b.summary.profiles.get(key) or {} %}{% if prof %}
+    <tr class="group"><th class="rowh">{{ b.building_name }} – {{ _("Building average") }}</th>
+    {% for c in columns %}{% set v = prof.get(c) %}<td class="{{ heat_class(v, kind) }}">{{ heat_text(v, kind) }}</td>{% endfor %}</tr>
+  {% endif %}{% endfor %}
+  {% for r in worst %}{% set prof = r.profiles.get(key) or {} %}{% if prof %}
+    <tr><th class="rowh">{{ r.building_name }} · {{ r.room_name }}</th>
+    {% for c in columns %}{% set v = prof.get(c) %}<td class="{{ heat_class(v, kind) }}">{{ heat_text(v, kind) }}</td>{% endfor %}</tr>
+  {% endif %}{% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+{% set hour_cols = profile_columns(report, "co2>1000_pct_by_hour") %}
+{% set month_cols = profile_columns(report, "co2>1000_pct_by_month") %}
+{% set temp_cols = profile_columns(report, "temperature>26_h_by_month") %}
+{% if hour_cols or month_cols %}
+<h2 class="page-break">{{ _("Time patterns") }}</h2>
+{% if hour_cols %}
+<div class="card">
+  <h3>{{ _("CO₂ above 1000 ppm by time of day") }}</h3>
+  <p class="muted small">{{ _("Share of occupied time above 1000 ppm, for the rooms needing attention and each building.") }}</p>
+  <div class="scroll">{{ heatmap("co2>1000_pct_by_hour", hour_cols, hour_label, "pct") }}</div>
+  <div class="heat-legend"><span style="--c:var(--lvl-1-bg)">&lt; 10 %</span><span style="--c:var(--lvl-2-bg)">10–25 %</span><span style="--c:var(--lvl-3-bg)">25–50 %</span><span style="--c:var(--lvl-4-bg)">≥ 50 %</span></div>
+</div>
+{% endif %}
+{% if month_cols %}
+<div class="card" style="margin-top:12px">
+  <h3>{{ _("CO₂ above 1000 ppm by month") }}</h3>
+  <div class="scroll">{{ heatmap("co2>1000_pct_by_month", month_cols, month_label, "pct") }}</div>
+</div>
+{% endif %}
+{% if temp_cols %}
+<div class="card" style="margin-top:12px">
+  <h3>{{ _("Hours above 26 °C by month") }}</h3>
+  <p class="muted small">{{ _("Occupied hours above 26 °C, for the rooms needing attention and each building (building rows: average per room).") }}</p>
+  <div class="scroll">{{ heatmap("temperature>26_h_by_month", temp_cols, month_label, "hours") }}</div>
+  <div class="heat-legend"><span style="--c:var(--lvl-1-bg)">0</span><span style="--c:var(--lvl-2-bg)">&lt; 10</span><span style="--c:var(--lvl-3-bg)">10–25</span><span style="--c:var(--lvl-4-bg)">≥ 25 {{ unit_h }}</span></div>
+</div>
+{% endif %}
+{% endif %}
+
 {% if worst %}
-<h2>Rooms needing attention</h2>
-<p class="muted">The {{ worst | length }} room(s) furthest from the Category {{ cfg.target_category }} target, worst first.</p>
+<h2 class="page-break">{{ _("Rooms needing attention") }}</h2>
+<p class="muted">{{ _("The {n} room(s) furthest from the Category {cat} target, worst first.", n=(worst | length), cat=cfg.target_category) }}</p>
 {% for r in worst %}
 <article class="card room-card">
   <header>
     <div>
       <h3>{{ r.room_name }}</h3>
-      <div class="muted small">{{ [r.building_name, r.floor_name, r.room_type] | select | join(" · ") }}{% if r.area_m2 %} · {{ r.area_m2 | num(0, "m²") }}{% endif %}</div>
+      <div class="muted small">{{ [r.building_name, r.floor_name, r.room_type and _(r.room_type)] | select | join(" · ") }}{% if r.area_m2 %} · {{ r.area_m2 | num(0, "m²") }}{% endif %}</div>
     </div>
     <div>
-      {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none">&lt;IV</span>{% else %}<span class="cat cat-none">n/a</span>{% endif %}
-      <span class="pill {{ r.ieq_score | level }}">Score {{ r.ieq_score | num }}</span>
+      {% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="{{ _('Below Category IV') }}">&lt;IV</span>{% else %}<span class="cat cat-none">–</span>{% endif %}
+      <span class="pill {{ r.ieq_score | level }}">{{ _("Score") }} {{ r.ieq_score | num }}</span>
       {% if r.tail_rating %}<span class="pill">TAIL {{ r.tail_rating }}</span>{% endif %}
-      {% if r.br18_pass is not none %}<span class="pill" title="{{ r.br18_failed | join('; ') }}">BR18 {{ "pass" if r.br18_pass else "fail" }}</span>{% endif %}
+      {% if r.br18_pass is not none %}<span class="pill" title="{{ r.br18_failed | map('translate') | join('; ') }}">BR18 {{ _("pass") if r.br18_pass else _("fail") }}</span>{% endif %}
     </div>
   </header>
   {% if r.issues %}<ul class="issues">{% for i in r.issues %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
   {% if r.parameters %}
   <div class="scroll">
   <table class="small">
-    <thead><tr><th>Parameter</th><th class="num">Within Cat {{ cfg.target_category }}</th><th class="num">Mean</th><th class="num">Min</th><th class="num">Max</th></tr></thead>
+    <thead><tr><th>{{ _("Parameter") }}</th><th class="num">{{ _("Within Cat {cat}", cat=cfg.target_category) }}</th><th class="num">{{ _("Mean") }}</th><th class="num">{{ _("Min") }}</th><th class="num">{{ _("Max") }}</th></tr></thead>
     <tbody>
     {% for p, ps in r.parameters.items() %}
       <tr><td>{{ param_label(p) }}</td><td class="num {{ ps.compliance_pct | level }}">{{ ps.compliance_pct | pct }}</td>
@@ -212,61 +288,60 @@
   </div>
   {% endif %}
   {% if r.seasons | length > 1 %}
-  <p class="small muted">By season:
-    {% for se in r.seasons %}{{ se.season | capitalize }} {{ se.achieved_category or "n/a" }} ({{ se.compliance_pct | pct(0) }} within target){% if not loop.last %} · {% endif %}{% endfor %}
+  <p class="small muted">{{ _("By season") }}:
+    {% for se in r.seasons %}{{ _("{season} {cat} ({pct} within target)", season=(_(se.season) | capitalize), cat=(se.achieved_category or "<IV"), pct=(se.compliance_pct | pct(0))) }}{% if not loop.last %} · {% endif %}{% endfor %}
   </p>
   {% endif %}
   {% if r.exceedance_hours %}
-  <p class="small"><strong>Hours above limits (occupied):</strong>
-    {% for key, hours in r.exceedance_hours.items() %}{% set p, lim = key.split(">") %}{{ param_label(p) }} &gt; {{ lim }}: {{ hours | num(0, "h") }}{% if not loop.last %} · {% endif %}{% endfor %}
+  <p class="small"><strong>{{ _("Hours above limits (occupied)") }}:</strong>
+    {% for key, hours in r.exceedance_hours.items() %}{% set p, lim = key.split(">") %}{{ param_label(p) }} &gt; {{ lim }}: {{ hours | num(0, unit_h) }}{% if not loop.last %} · {% endif %}{% endfor %}
   </p>
   {% endif %}
   {% if r.period_breakdown %}
-  <p class="small"><strong>By time of day:</strong>
-    {% for name, st in r.period_breakdown.items() %}{{ name | capitalize }}: CO₂ mean {{ st.get("co2_mean") | num(0, "ppm") }}, &gt; 1000 ppm {{ st.get("co2>1000_pct") | pct(0) }} of the time{% if not loop.last %} · {% endif %}{% endfor %}
+  <p class="small"><strong>{{ _("By time of day") }}:</strong>
+    {% for name, st in r.period_breakdown.items() %}{{ _("{period}: CO₂ mean {mean}, > 1000 ppm {pct} of the time", period=(_(name) | capitalize) ~ period_span(name), mean=(st.get("co2_mean") | num(0, "ppm")), pct=(st.get("co2>1000_pct") | pct(0))) }}{% if not loop.last %} · {% endif %}{% endfor %}
   </p>
   {% endif %}
-  {% if r.ventilation %}<p class="small"><strong>Air change from CO₂ decay:</strong> {{ r.ventilation.description }} <span class="muted">Decays mostly occur after hours, when mechanical ventilation may be off.</span></p>{% endif %}
+  {% if r.ventilation %}<p class="small"><strong>{{ _("Air change from CO₂ decay") }}:</strong> {{ r.ventilation.ach | num(2) }} {{ "luftskifter/time" if lang == "da" else "ACH" }} (R² {{ r.ventilation.r_squared | num(2) }}). <span class="muted">{{ _("Decays mostly occur after hours, when mechanical ventilation may be off.") }}</span></p>{% endif %}
   {% if r.recommendations %}
   <details>
-    <summary>{{ r.recommendations | length }} recommendation(s)</summary>
+    <summary>{{ _("{n} recommendation(s)", n=(r.recommendations | length)) }}</summary>
     {% for rec in r.recommendations %}
     <div class="rec">
-      <strong>{{ rec.title }}</strong> <span class="small prio-{{ rec.priority }}">{{ rec.priority | capitalize }}</span>
+      <strong>{{ rec.title }}</strong> <span class="small prio-{{ rec.priority }}">{{ _(rec.priority | capitalize) }}</span>
       <div class="small">{{ rec.description }}</div>
-      {% if rec.expected_benefit %}<div class="small muted">Benefit: {{ rec.expected_benefit }}</div>{% endif %}
+      {% if rec.expected_benefit %}<div class="small muted">{{ _("Benefit") }}: {{ rec.expected_benefit }}</div>{% endif %}
     </div>
     {% endfor %}
   </details>
   {% endif %}
   <div class="small muted">
-    Data: {{ r.data_quality.get("samples", 0) }} samples, {{ r.data_quality.get("start") | date }} → {{ r.data_quality.get("end") | date }},
-    {{ r.data_quality.get("completeness_pct") | pct(0) }} complete{% if r.data_quality.get("gaps") %}, {{ r.data_quality.get("gaps") }} gap(s){% endif %}.
-    {% if r.warnings %}<br>Notes: {{ r.warnings | join(" ") }}{% endif %}
+    {{ _("Data: {n} samples, {start} → {end}, {pct} complete", n=(r.data_quality.get("samples", 0) | num(0)), start=(r.data_quality.get("start") | date), end=(r.data_quality.get("end") | date), pct=(r.data_quality.get("completeness_pct") | pct(0))) }}{% if r.data_quality.get("gaps") %}, {{ _("{n} gap(s)", n=r.data_quality.get("gaps")) }}{% endif %}.
+    {% if r.warnings %}<br>{{ _("Notes") }}: {{ r.warnings | join(" ") }}{% endif %}
   </div>
 </article>
 {% endfor %}
 {% endif %}
 
-<h2>All rooms</h2>
+<h2 class="page-break">{{ _("All rooms") }}</h2>
 <details {% if report.rooms | length <= 60 %}open{% endif %}>
-<summary>Show all {{ report.rooms | length }} rooms</summary>
-<input class="filter" type="search" placeholder="Filter rooms, buildings, categories…" aria-label="Filter rooms" data-filter="rooms-table">
+<summary>{{ _("Show all {n} rooms", n=(report.rooms | length)) }}</summary>
+<input class="filter" type="search" placeholder="{{ _('Filter rooms, buildings, categories…') }}" aria-label="{{ _('Filter rooms') }}" data-filter="rooms-table">
 <div class="table-wrap">
 <table class="sortable" id="rooms-table">
   <thead><tr>
-    <th data-sort="text">Building</th><th data-sort="text">Floor</th><th data-sort="text">Room</th>
-    <th data-sort="text">Category</th><th data-sort="num" class="num">Score</th>
-    <th data-sort="num" class="num">Temp.</th><th data-sort="num" class="num">CO₂</th><th data-sort="num" class="num">RH</th>
-    <th data-sort="num" class="num">CO₂&gt;1000 h</th><th data-sort="num" class="num">T&gt;26 h</th>
-    <th data-sort="text">TAIL</th><th data-sort="num" class="num">Data</th>
+    <th data-sort="text">{{ _("Building") }}</th><th data-sort="text">{{ _("Floor") }}</th><th data-sort="text">{{ _("Room") }}</th>
+    <th data-sort="text">{{ _("Category") }}</th><th data-sort="num" class="num">{{ _("Score") }}</th>
+    <th data-sort="num" class="num">{{ _("Temp.") }}</th><th data-sort="num" class="num">CO₂</th><th data-sort="num" class="num">{{ _("RH") }}</th>
+    <th data-sort="num" class="num">CO₂&gt;1000 {{ unit_h }}</th><th data-sort="num" class="num">T&gt;26 {{ unit_h }}</th>
+    <th data-sort="text">TAIL</th><th data-sort="num" class="num">{{ _("Data") }}</th>
   </tr></thead>
   <tbody>
   {% for r in report.rooms %}
     <tr>
       <td>{{ r.building_name or "–" }}</td><td>{{ r.floor_name or "–" }}</td>
-      <td>{{ r.room_name }}{% if r.status != "ok" %} <span class="pill">{{ "no data" if r.status == "no_data" else "error" }}</span>{% endif %}</td>
-      <td data-v="{{ r.achieved_category or ('Y' if r.below_category_iv else 'Z') }}">{% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="Below Category IV">&lt;IV</span>{% else %}–{% endif %}</td>
+      <td>{{ r.room_name }}{% if r.status != "ok" %} <span class="pill">{{ _("no data") if r.status == "no_data" else _("error") }}</span>{% endif %}</td>
+      <td data-v="{{ r.achieved_category or ('Y' if r.below_category_iv else 'Z') }}">{% if r.achieved_category %}<span class="cat cat-{{ r.achieved_category }}">{{ r.achieved_category }}</span>{% elif r.below_category_iv %}<span class="cat cat-none" title="{{ _('Below Category IV') }}">&lt;IV</span>{% else %}–{% endif %}</td>
       <td class="num {{ r.ieq_score | level }}" data-v="{{ r.ieq_score if r.ieq_score is not none else -1 }}">{{ r.ieq_score | num }}</td>
       {% for p in ["temperature", "co2", "humidity"] %}
       {% set v = r.compliance.get(p) %}
@@ -287,34 +362,33 @@
 </details>
 
 {% set problem_rooms = report.rooms | selectattr("status", "ne", "ok") | list %}
-{% if problem_rooms or report.warnings %}
-<h2>Data coverage</h2>
+{% if problem_rooms %}
+<h2>{{ _("Data coverage") }}</h2>
 <div class="card">
-  {% if problem_rooms %}
-  <p>{{ problem_rooms | length }} room(s) were not assessed:</p>
+  <p>{{ _("{n} room(s) were not assessed:", n=(problem_rooms | length)) }}</p>
   <ul class="small">
     {% for r in problem_rooms[:200] %}<li>{{ r.building_name or "–" }} / {{ r.room_name }}: {{ r.message }}</li>{% endfor %}
-    {% if problem_rooms | length > 200 %}<li>… and {{ problem_rooms | length - 200 }} more (see JSON/CSV export).</li>{% endif %}
+    {% if problem_rooms | length > 200 %}<li>{{ _("… and {n} more (see JSON/CSV export).", n=(problem_rooms | length - 200)) }}</li>{% endif %}
   </ul>
-  {% endif %}
 </div>
 {% endif %}
 
-<h2>Method</h2>
+<h2>{{ _("Method") }}</h2>
 <div class="card small">
   <ul class="findings">
-    <li><strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). The achieved category is the best category whose limits are met for the share of time the standard requires.</li>
-    <li><strong>Seasons.</strong> {% if cfg.seasons | length > 1 %}Data is split into the country's heating and cooling months; each part is assessed with its own criteria, and a room's category is its worst seasonal category.{% else %}All data is assessed with {{ cfg.seasons[0] }} criteria.{% endif %}</li>
-    <li><strong>Assessed hours.</strong> {% if cfg.occupied_only %}Standards are applied to occupied hours only{% if occ | length == 1 %} ({{ occ[0] }}){% endif %}; the air-change estimate uses all hours.{% else %}All hours are assessed.{% endif %} Hours above limits are weighted by each sample's duration.</li>
-    <li><strong>Compliance %.</strong> Share of samples within Category {{ cfg.target_category }} limits, per parameter. Parameters below {{ cfg.issue_threshold_pct | num(0) }}% are listed as issues.</li>
-    <li><strong>IEQ score.</strong> Weighted mean of parameter compliance ({% for p, w in cfg.score_weights.items() %}{{ param_label(p) }} {{ (w * 100) | round | int }}%{% if not loop.last %}, {% endif %}{% endfor %}; weights renormalised over available parameters).</li>
-    <li><strong>Building and portfolio category.</strong> The best category that at least {{ (cfg.group_category_threshold * 100) | round | int }}% of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.</li>
-    <li><strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.</li>
+    <li>{{ _("<strong>Standard.</strong> Rooms are assessed with EN 16798-1 (plus TAIL and BR18 where applicable). The achieved category is the best category whose limits are met for the share of time the standard requires.") | safe }}</li>
+    <li>{% if cfg.seasons | length > 1 %}{{ _("<strong>Seasons.</strong> Data is split into the country's heating and cooling months; each part is assessed with its own criteria, and a room's category is its worst seasonal category.") | safe }}{% else %}{{ _("<strong>Seasons.</strong> All data is assessed with {season} criteria.", season=_(cfg.seasons[0])) | safe }}{% endif %}</li>
+    <li>{% if cfg.occupied_only %}{{ _("<strong>Assessed hours.</strong> Standards are applied to occupied hours only ({hours}); the air-change estimate uses all hours. Hours above limits are weighted by each sample's duration.", hours=(occ | join("; ") | e)) | safe }}{% else %}{{ _("<strong>Assessed hours.</strong> All hours are assessed.") | safe }}{% endif %}</li>
+    <li>{{ _("<strong>Compliance %.</strong> Share of samples within Category {cat} limits, per parameter. Parameters below {pct} are listed as issues.", cat=cfg.target_category, pct=(cfg.issue_threshold_pct | pct(0))) | safe }}</li>
+    <li>{{ _("<strong>IEQ score.</strong> Weighted mean of parameter compliance ({weights}; weights renormalised over available parameters).", weights=score_weights) | safe }}</li>
+    <li>{{ _("<strong>Building and portfolio category.</strong> The best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.", pct=((cfg.group_category_threshold * 100) | pct(0))) | safe }}</li>
+    {% for note in cfg.notes %}<li>{{ note }}</li>{% endfor %}
+    <li>{{ _("<strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.") | safe }}</li>
   </ul>
 </div>
 
 <footer>
-  {{ report.schema_version }} · {{ report.rooms | length }} rooms · built in {{ report.duration_s | num(1) }} s
+  {{ report.schema_version }} · {{ report.rooms | length }} {{ _("rooms") }} · {{ _("built in {s} s", s=(report.duration_s | num(1))) }}
 </footer>
 </main>
 <script>

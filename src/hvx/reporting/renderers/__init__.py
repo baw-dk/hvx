@@ -22,10 +22,16 @@ MEDIA_TYPES = {
     "html": "text/html; charset=utf-8",
     "json": "application/json",
     "csv": "text/csv; charset=utf-8",
+    "pdf": "application/pdf",
 }
 
 
-def render(report: PortfolioReport, fmt: str = "html") -> str:
+def render(report: PortfolioReport, fmt: str = "html"):
+    """Text for html/json/csv; bytes for pdf."""
+    if fmt.lower() == "pdf":
+        from .pdf import render_pdf
+
+        return render_pdf(report)
     try:
         return RENDERERS[fmt.lower()](report)
     except KeyError as exc:
@@ -36,7 +42,11 @@ def write(report: PortfolioReport, path: Union[str, Path], fmt: str | None = Non
     path = Path(path)
     fmt = (fmt or path.suffix.lstrip(".") or "html").lower()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(report, fmt), encoding="utf-8", newline="" if fmt == "csv" else None)
+    content = render(report, fmt)
+    if isinstance(content, bytes):
+        path.write_bytes(content)
+    else:
+        path.write_text(content, encoding="utf-8", newline="" if fmt == "csv" else None)
     return path
 
 

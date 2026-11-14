@@ -29,6 +29,7 @@ def stacked_bar(
     width: int = 600,
     height: int = 22,
     title: Optional[str] = None,
+    pct_format=lambda p: f"{p:.0f}%",
 ) -> str:
     """Horizontal 100 % bar. ``segments`` = [(label, value, css colour)]."""
     total = sum(max(v, 0) for _, v, _ in segments)
@@ -47,7 +48,7 @@ def stacked_bar(
             if w > 34 and height >= 18:
                 parts.append(
                     f'<text x="{x + w / 2:.2f}" y="{height / 2 + 4:.1f}" text-anchor="middle" '
-                    f'class="bar-label">{pct:.0f}%</text>'
+                    f'class="bar-label">{escape(pct_format(pct))}</text>'
                 )
             x += w
     else:
@@ -59,12 +60,15 @@ def stacked_bar(
     )
 
 
-def category_bar(counts: dict, width: int = 600, height: int = 22) -> str:
-    segments = [(CATEGORY_LABELS[c], float(counts.get(c, 0)), CATEGORY_COLORS[c]) for c in ("I", "II", "III", "IV", "none")]
-    return stacked_bar(segments, width=width, height=height, title="Rooms by EN 16798-1 category")
+def category_bar(counts: dict, width: int = 600, height: int = 22, labels: Optional[dict] = None,
+                 title: str = "EN 16798-1", pct_format=None) -> str:
+    names = {**CATEGORY_LABELS, **(labels or {})}
+    segments = [(names[c], float(counts.get(c, 0)), CATEGORY_COLORS[c]) for c in ("I", "II", "III", "IV", "none")]
+    extra = {"pct_format": pct_format} if pct_format else {}
+    return stacked_bar(segments, width=width, height=height, title=title, **extra)
 
 
-def histogram(bins: Sequence[int], width: int = 600, height: int = 180, title: str = "Rooms by IEQ score") -> str:
+def histogram(bins: Sequence[int], width: int = 600, height: int = 180, title: str = "Rooms by IEQ score", unit: str = "room(s)") -> str:
     """Vertical histogram of 10 score bins (0-10 ... 90-100)."""
     pad_l, pad_b, pad_t = 28, 22, 10
     n = len(bins) or 1
@@ -82,7 +86,7 @@ def histogram(bins: Sequence[int], width: int = 600, height: int = 180, title: s
         color = "var(--cat-4)" if i < 5 else "var(--cat-3)" if i < 8 else "var(--cat-2)" if i < 9 else "var(--cat-1)"
         parts.append(
             f'<rect x="{x + 2:.1f}" y="{pad_t + plot_h - h:.1f}" width="{bar_w - 4:.1f}" height="{h:.1f}" '
-            f'fill="{color}" rx="2"><title>{i * 10}–{i * 10 + 10}: {count} room(s)</title></rect>'
+            f'fill="{color}" rx="2"><title>{i * 10}–{i * 10 + 10}: {count} {escape(unit)}</title></rect>'
         )
         if count:
             parts.append(

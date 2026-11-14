@@ -66,10 +66,10 @@
   "selector": {
     "target_category": {
       "options": {
-        "I": "Category I – high",
-        "II": "Category II – normal",
-        "III": "Category III – moderate",
-        "IV": "Category IV – low"
+        "cat_i": "Category I – high",
+        "cat_ii": "Category II – normal",
+        "cat_iii": "Category III – moderate",
+        "cat_iv": "Category IV – low"
       }
     },
     "building_type": {

@@ -17,12 +17,19 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_AREAS = "areas"
 CONF_ROOMS = "rooms"
 
-DEFAULT_TARGET_CATEGORY = "II"
+DEFAULT_TARGET_CATEGORY = "cat_ii"
 DEFAULT_WINDOW_DAYS = 7
 DEFAULT_SCAN_INTERVAL = 15  # minutes
 DEFAULT_BUILDING_TYPE = "residential"  # most HA installs are homes: assessed around the clock
 
-CATEGORIES = ["I", "II", "III", "IV"]
+# Selector option values must be lowercase for translations (hassfest).
+TARGET_OPTIONS = {"cat_i": "I", "cat_ii": "II", "cat_iii": "III", "cat_iv": "IV"}
+
+
+def target_category(value: str | None) -> str:
+    """Stored option ("cat_ii", or a legacy "II") -> EN 16798 category."""
+    value = str(value or DEFAULT_TARGET_CATEGORY)
+    return TARGET_OPTIONS.get(value.lower(), value.upper())
 BUILDING_TYPES = ["office", "school", "residential", "meeting_room", "classroom"]
 
 # hvx parameter -> Home Assistant sensor device class

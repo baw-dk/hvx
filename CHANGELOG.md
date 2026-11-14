@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Report languages: `ReportConfig(language="da")` gives a Danish report (texts, recommendations,
+  key findings, Danish number and date formats); `introduction` and `notes` for client-specific text.
+- PDF output (`.pdf` / `render(report, "pdf")`) via headless Chromium; `pdf` extra.
+- Heatmaps of CO₂ > 1000 ppm by hour of day and by month, and hours > 26 °C by month.
 - Reports assess **occupied hours only** by default (building-type opening hours,
   public holidays, configurable school/holiday periods via `ReportConfig.occupancy`,
   `holiday_periods` or `metadata["holiday_periods"]`); `occupied_only=False` restores 24/7.
@@ -28,6 +32,8 @@ All notable changes to this project are documented here. The format follows
 - Imports move to the `hvx` namespace (`from hvx.core ...`).
 
 ### Fixed
+- CI: hassfest rejected uppercase selector option keys; the HACS job is skipped for private
+  repositories; the MQTT test broker failed on Python 3.10; actions updated to Node 24 versions.
 - Rooms below EN 16798 Category IV in a season were shown as Category IV or left out of
   "rooms needing attention"; they now rank first and count against building categories.
 - "Increase ventilation" was recommended for every room with a low after-hours CO₂ decay

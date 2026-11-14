@@ -5,29 +5,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 from markupsafe import Markup
 
 from .. import charts
 from ..analysis import PARAMETER_LABELS
+from ..i18n import Translator
 from ..model import PortfolioReport
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
-
-
-def _pct(value: Optional[float], digits: int = 1) -> str:
-    return "–" if value is None else f"{value:.{digits}f}%"
-
-
-def _num(value: Optional[float], digits: int = 1, unit: str = "") -> str:
-    if value is None:
-        return "–"
-    text = f"{value:,.{digits}f}"
-    return f"{text} {unit}".strip()
 
 
 def _level(value: Optional[float]) -> str:
@@ -43,16 +32,30 @@ def _level(value: Optional[float]) -> str:
     return "lvl-4"
 
 
-def _date(value: Optional[str]) -> str:
-    if not value:
-        return "–"
-    try:
-        return datetime.fromisoformat(value).strftime("%Y-%m-%d")
-    except ValueError:
-        return value
+def _heat_class(value: Optional[float], kind: str) -> str:
+    """Badness bins for heatmap cells: share of time (pct) or hours."""
+    if value is None:
+        return "heat-na"
+    bounds = (10, 25, 50) if kind == "pct" else (0.5, 10, 25)
+    if kind == "hours" and value < bounds[0]:
+        return "heat-0"
+    for i, bound in enumerate(bounds):
+        if value < bound:
+            return f"heat-{i}"
+    return "heat-3"
 
 
-def _environment() -> Environment:
+def _profile_columns(report: PortfolioReport, key: str) -> List[int]:
+    cols = set()
+    for b in report.buildings:
+        cols.update((b.summary.profiles.get(key) or {}).keys())
+    for r in report.worst_rooms:
+        cols.update((r.profiles.get(key) or {}).keys())
+    return sorted(int(c) for c in cols)
+
+
+def _environment(report: PortfolioReport) -> Environment:
+    t = Translator(report.config.get("language", "en"))
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(enabled_extensions=("html", "j2"), default=True),
@@ -60,19 +63,38 @@ def _environment() -> Environment:
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    env.filters.update(pct=_pct, num=_num, level=_level, date=_date)
+    labels = {c: t(text) if c == "none" else t("Cat {cat}", cat=c) for c, text in charts.CATEGORY_LABELS.items()}
+    day_periods = report.config.get("day_periods") or {}
+    weights = report.config.get("score_weights") or {}
+    env.filters.update(
+        pct=lambda v, d=1: t.pct(v, d),
+        num=lambda v, d=1, unit="": t.num(v, d, unit),
+        level=_level,
+        date=t.date,
+        translate=lambda v: t(str(v)),
+    )
     env.globals.update(
-        category_bar=lambda counts, **kw: Markup(charts.category_bar(counts, **kw)),
-        histogram=lambda bins, **kw: Markup(charts.histogram(bins, **kw)),
+        _=t,
+        lang=t.language,
+        unit_h="t" if t.language == "da" else "h",
+        category_bar=lambda counts, **kw: Markup(charts.category_bar(counts, labels=labels, pct_format=lambda p: t.pct(p, 0), **kw)),
+        histogram=lambda bins, **kw: Markup(charts.histogram(bins, title=t("Distribution of room IEQ scores"), unit=t("rooms"), **kw)),
         meter=lambda v, **kw: Markup(charts.meter(v, **kw)),
-        param_label=lambda p: PARAMETER_LABELS.get(p, p),
-        CATEGORY_LABELS=charts.CATEGORY_LABELS,
+        param_label=lambda p: t(PARAMETER_LABELS.get(p, p)),
+        category_label=lambda c: labels.get(c, c),
+        heat_class=_heat_class,
+        heat_text=lambda v, kind: "" if v is None else t.num(v, 0),
+        profile_columns=lambda rep, key: _profile_columns(rep, key),
+        hour_label=lambda h: f"{int(h):02d}",
+        month_label=lambda m: t.month(int(m)),
+        period_span=lambda name: f" ({day_periods[name][0][:2]}–{day_periods[name][1][:2]})" if name in day_periods else "",
+        score_weights=", ".join(f"{t(PARAMETER_LABELS.get(p, p))} {t.pct(w * 100, 0)}" for p, w in weights.items()),
     )
     return env
 
 
 def render_html(report: PortfolioReport) -> str:
-    template = _environment().get_template("report.html.j2")
+    template = _environment(report).get_template("report.html.j2")
     return template.render(report=report, cfg=report.config, s=report.summary)
 
 

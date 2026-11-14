@@ -80,6 +80,7 @@ class RoomReport:
     occupancy: Optional[str] = None  # description of the hours assessed
     exceedance_hours: Dict[str, float] = field(default_factory=dict)  # e.g. {"co2>1000": 586.0}
     period_breakdown: Dict[str, Dict[str, Optional[float]]] = field(default_factory=dict)
+    profiles: Dict[str, Dict[int, Optional[float]]] = field(default_factory=dict)  # by hour of day / month
     issues: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     assessments: List[Dict[str, Any]] = field(default_factory=list)  # IEQAssessment dumps
@@ -112,6 +113,7 @@ class GroupSummary:
     ieq_score: Optional[float] = None
     compliance: Dict[str, Optional[float]] = field(default_factory=dict)
     exceedance_hours: Dict[str, float] = field(default_factory=dict)  # mean per analysed room
+    profiles: Dict[str, Dict[int, float]] = field(default_factory=dict)  # mean of room profiles
     score_histogram: List[int] = field(default_factory=lambda: [0] * 10)
 
 
