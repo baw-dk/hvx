@@ -442,7 +442,8 @@ def test_tail_tree():
 
 def test_tail_section_in_report(portfolio):
     html = render(ReportBuilder(ReportConfig(language="da", **FAST)).build(*portfolio), "html")
-    assert "tail-tree" in html and "Typisk lokale" in html and 'class="tail-badge"' in html
+    assert 'class="chart tail"' in html and "Typisk lokale" in html and 'class="tail-badge"' in html
+    assert "tail-tree" not in html
 
 
 def test_offset_timestamps_are_read_as_local_time():
@@ -451,3 +452,14 @@ def test_offset_timestamps_are_read_as_local_time():
     idx = to_datetime_index(["2024-01-15T08:00:00+01:00", "2024-07-15T06:00:00Z", "2024-03-01 09:30"], "Europe/Copenhagen")
     assert [str(t) for t in idx] == ["2024-01-15 08:00:00", "2024-07-15 08:00:00", "2024-03-01 09:30:00"]
     assert str(to_datetime_index(["2024-01-15T08:00:00+01:00"])[0]) == "2024-01-15 07:00:00"  # no zone: UTC
+
+
+def test_tail_donut_collapses_unmeasured_parameters():
+    from hvx.reporting.charts import tail_sunburst
+
+    svg = tail_sunburst({"overall": "III", "domains": {"thermal": "III", "iaq": "II"},
+                         "parameters": {"temperature": "III", "co2": "II", "humidity": "I"}},
+                        size=260, language="da", na="ikke målt")
+    # air quality: CO2, RH and one grey segment (not eight slivers); acoustic and light: one grey segment each
+    assert svg.count("<path d=") == 4 + 1 + 1 + 3 + 1  # 4 domain sectors + T, A, I(3), L outer segments
+    assert "Ikke målt: Benzen, CH₂O, PM2.5, Radon, Vent., Skimmel" in svg

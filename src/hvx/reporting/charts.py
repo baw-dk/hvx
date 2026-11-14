@@ -184,7 +184,8 @@ def rounded_sector(cx: float, cy: float, r0: float, r1: float, a0: float, a1: fl
     )
 
 
-def tail_sunburst(tail: dict, size: int = 260, language: str = "en", title: str = "TAIL", na: str = "not assessed") -> str:
+def tail_sunburst(tail: dict, size: int = 260, language: str = "en", title: str = "TAIL", na: str = "not assessed",
+                  na_short: Optional[str] = None) -> str:
     """
     The TAIL rating diagram: overall rating in the centre, the four domains
     (Thermal, Acoustic, Indoor air, Luminous) in the middle ring and their
@@ -199,6 +200,7 @@ def tail_sunburst(tail: dict, size: int = 260, language: str = "en", title: str 
     domain_labels = TAIL_DOMAIN_LABELS.get(language, TAIL_DOMAIN_LABELS["en"])
     params = {_TAIL_ALIASES.get(k, k): v for k, v in (tail.get("parameters") or {}).items()}
     domains = tail.get("domains") or {}
+    na_short = na_short or na
     cx = cy = size / 2
     outer = size / 2 - 3
     gap = max(2.0, size / 110)  # white space between segments and rings
@@ -227,15 +229,22 @@ def tail_sunburst(tail: dict, size: int = 260, language: str = "en", title: str 
         return math.degrees(gap / radius) / 2  # constant linear gap at that radius
 
     for domain, letter, start, members in TAIL_LAYOUT:
-        span = 90.0 / len(members)
+        # Outer ring: the domain's measured parameters, plus ONE grey segment for the
+        # parameters that were not measured (so e.g. air quality does not splinter into
+        # eight mostly grey slivers). Its tooltip lists them.
+        measured = [(name, labels.get(name, name), params[name], None) for name in members if params.get(name)]
+        missing = [labels.get(name, name) for name in members if not params.get(name)]
+        segments = list(measured)
+        if missing:
+            segments.append((f"na-{domain}", missing[0] if len(missing) == 1 else na_short, None, ", ".join(missing)))
+        span = 90.0 / len(segments)
         p_pad = pad((r_par0 + r_par1) / 2)
-        for i, name in enumerate(members):
+        for i, (name, text, rating, tooltip) in enumerate(segments):
             a0, a1 = start + i * span + p_pad, start + (i + 1) * span - p_pad
-            rating = params.get(name)
-            text = labels.get(name, name)
+            tip = f"{na.capitalize()}: {tooltip}" if tooltip else f"{text}: {rating or na}"
             parts.append(
                 f'<path d="{rounded_sector(cx, cy, r_par0, r_par1, a0, a1, corner)}" fill="{TAIL_COLORS.get(rating, TAIL_COLORS[None])}" {white}>'
-                f"<title>{escape(text)}: {escape(rating or na)}</title></path>"
+                f"<title>{escape(tip)}</title></path>"
             )
             mid = (a0 + a1) / 2
             lx, ly = _polar(cx, cy, (r_par0 + r_par1) / 2, mid)

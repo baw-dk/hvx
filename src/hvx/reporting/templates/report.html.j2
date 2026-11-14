@@ -70,8 +70,9 @@
   footer { margin-top: 48px; color: var(--muted); font-size: 12px; }
   .intro p { margin: 0 0 10px; max-width: 75ch; }
   svg.tail { display: block; max-width: 100%; height: auto; }
-  .tail-tree-fig { margin: 0 0 6px; }
-  .tail-tree-fig figcaption { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .tail-row { display: flex; flex-wrap: wrap; gap: 20px 28px; align-items: flex-end; }
+  .tail-row figure { margin: 0; text-align: center; }
+  .tail-row figcaption { font-size: 12.5px; color: var(--muted); margin-top: 6px; max-width: 220px; margin-inline: auto; }
   .tail-badge { display: inline-block; min-width: 30px; text-align: center; padding: 1px 8px; border-radius: 999px; font-weight: 650; font-size: 12px; white-space: nowrap; }
   table.tail-matrix { margin-top: 14px; }
   table.tail-matrix td.c, table.tail-matrix th.c { text-align: center; }
@@ -189,10 +190,12 @@
 {% if s.tail %}
 <h2>{{ _("TAIL rating") }}</h2>
 <div class="card">
-  <figure class="tail-tree-fig">
-    <figcaption><strong>{{ _("Typical room (hvx summary)") }}</strong> · {{ report.portfolio_name }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
-    {{ tail_tree(s.tail) }}
-  </figure>
+  <div class="tail-row">
+    <figure class="tail-main">{{ tail_chart(s.tail, 280) }}<figcaption><strong>{{ report.portfolio_name }}</strong><br>{{ _("Typical room (hvx summary)") }}<br>{{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption></figure>
+    {% for b in report.buildings %}{% if b.summary.tail and report.buildings | length > 1 %}
+    <figure>{{ tail_chart(b.summary.tail, 200) }}<figcaption><strong>{{ b.building_name }}</strong><br>{{ _("{n} rooms", n=b.summary.tail.get("rooms", 0)) }}</figcaption></figure>
+    {% endif %}{% endfor %}
+  </div>
   {% set tail_buildings = report.buildings | selectattr("summary.tail") | list %}
   {% if tail_buildings | length > 1 %}
   <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the typical room (hvx summary: rounded mean of the rooms' TAIL ratings, not a TAIL building rating). Bars below: how the rooms are spread over I–IV.") }}</p>
@@ -211,7 +214,7 @@
   </table>
   </div>
   {% endif %}
-  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read the tree from left to right: each domain takes its worst parameter and the overall rating its worst domain. For a group of rooms the tree shows the typical room, an hvx summary: each parameter is the rounded mean of the rooms' TAIL ratings. It is not a TAIL building rating, which TAIL derives from the pooled data of all rooms. Grey, dashed: not measured, so the domain is not rated.") }}</p>
+  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read each circle from the outside in: the outer ring shows the measured parameters, the middle ring the four domains (each takes its worst parameter) and the centre the overall rating (the worst domain). For a group of rooms the circle shows the typical room, an hvx summary: each parameter is the rounded mean of the rooms' TAIL ratings. It is not a TAIL building rating, which TAIL derives from the pooled data of all rooms. Grey: not measured (hover for the parameters), so the domain is not rated.") }}</p>
 </div>
 {% endif %}
 
