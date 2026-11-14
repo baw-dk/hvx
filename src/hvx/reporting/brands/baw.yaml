@@ -6,13 +6,13 @@
 # (or ReportConfig(branding="baw")). Without --brand, reports are white-label.
 
 name: BAW
-legal_name: ""          # registered company name, as in the CVR register
-cvr: ""                 # 8-digit CVR number
-address: ""             # e.g. "Street 1, 2630 Taastrup"
+legal_name: "BAW – Bruno Adam Wallon"   # BAW design system: the practice of Bruno Adam Wallon
+cvr: "46539214"          # 8-digit CVR number
+address: "Copenhagen"
 email: ""
 phone: ""
-website: ""
+website: "brunoadam.eu"
 logo: ""                # SVG or PNG, path relative to this file (or absolute); empty: name as wordmark
-accent: "#1d4ed8"       # brand colour for headings, links and accents
+accent: "#2d5b88"       # BAW "blueprint": links and information (signal yellow is not for text)
 
 required: [legal_name, cvr]
