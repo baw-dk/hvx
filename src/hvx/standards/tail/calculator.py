@@ -2,49 +2,132 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """
-TAIL (Thermal, Acoustic, Indoor Air Quality, Luminous) rating calculator.
+TAIL (Thermal, Acoustic, Indoor air quality, Luminous) rating calculator.
 
-Implements the algorithm described in standards/tail/docs/TAIL_algorithm.txt.
-Processes parameter time series, applies schedule filtering, categorises
-measurements per parameter-specific logic, and returns graph-ready data.
+Follows the authors' reference implementation ``tail.R``
+(github.com/asitkm76/TAILRatingScheme, commit c71b8b5) of Wargocki et al.
+(2021), Energy & Buildings 244, 111029, doi:10.1016/j.enbuild.2021.111029.
+"l.NN" in comments is a line of ``tail.R``. Every threshold is read from
+``config.yaml`` next to this module, which cites the same lines.
+
+How each parameter is labelled (details in config.yaml):
+
+* temperature and relative humidity: each occupied sample is coloured
+  Green/Yellow/Orange/Red and the label follows from the time shares of the
+  colours (l.351-369, 450-470). Temperature uses heating-season bands for
+  samples in October-May and non-heating bands for June-September, per sample.
+* CO2: 95th percentile after raising values below outdoor (420 ppm) to outdoor.
+* noise: 5th percentile after raising values below 30 dB to 30 dB.
+* illuminance: share of time within 300-500 lx (offices) or at or above
+  100 lx (hotels).
+* PM2.5, formaldehyde, benzene, radon: any Red sample -> IV, any Yellow -> II, else I.
+* ventilation, mould, daylight factor: worst observation.
+* domain = worst parameter, overall = worst domain; unmeasured and unrated
+  parameters are left out.
+
+Where hvx departs from a literal reading of tail.R:
+
+* The time-share rule of tail.R has gaps (e.g. 99.5 % Green + 0.5 % Red meets
+  none of the I-III conditions and falls to IV). hvx reads it cumulatively:
+  I if Green >= 94 %, Orange <= 1 % and Red = 0; otherwise II if Orange <= 5 %
+  and Red <= 1 %; otherwise III if Red <= 5 %; otherwise IV. Every case
+  tail.R rates I-III keeps its label.
+* Shares are over samples that have a value; tail.R counts missing values
+  in the denominator.
+* tail.R leaves a hotel noise P5 of exactly 35 dB without category; hvx rates it
+  Orange. RH and illuminance of building types other than office and hotel use
+  the office rules (tail.R leaves them unrated).
+* PM10 and VOC are not TAIL parameters. They are rated with hvx's own limits
+  as *extensions* and never enter the Indoor Air domain or the overall rating.
+
+tail.R rates a whole building by pooling the data of all monitored rooms; this
+calculator rates whatever series it is given (one room in hvx reports).
 """
 
 from __future__ import annotations
 
+import copy
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from hvx.core.schedules import (
     generate_occupancy_mask,
     get_opening_profile_for_building_type,
 )
 
+COLORS: Tuple[str, ...] = ("green", "yellow", "orange", "red")
+
+
+@lru_cache(maxsize=1)
+def _load_config_cached() -> Dict[str, Any]:
+    with open(Path(__file__).with_name("config.yaml"), encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_config() -> Dict[str, Any]:
+    """The TAIL configuration (a copy: callers may modify it)."""
+    return copy.deepcopy(_load_config_cached())
+
+
+def _deep_merge(base: Dict[str, Any], overrides: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in (overrides or {}).items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def normalize_type(value: Any) -> str:
+    """'Small office', 'small-office', RoomType.OPEN_OFFICE -> 'small_office', 'open_office'."""
+    value = getattr(value, "value", value)
+    if value is None:
+        return ""
+    return re.sub(r"[\s\-]+", "_", str(value).strip().lower())
+
+
+def r_round(series: pd.Series, digits: int) -> pd.Series:
+    """
+    Round like R's ``round()`` (R >= 4): to the nearest decimal of the value's
+    exact binary representation, exact halves to even. Python's ``round`` does
+    the same; numpy's ``round`` does not (``np.round(23.05, 1)`` is 23.0, R and
+    Python give 23.1).
+    """
+    return series.map(lambda v: float(round(float(v), digits)))
+
 
 class TAILRating(int, Enum):
-    """TAIL rating levels."""
+    """TAIL labels (tail.R l.655-671)."""
 
-    EXCELLENT = 1  # Green - ≥95% compliant
-    GOOD = 2  # Yellow - 70-95% compliant
-    FAIR = 3  # Orange - 50-70% compliant
-    POOR = 4  # Red - <50% compliant
+    EXCELLENT = 1  # I, Green
+    GOOD = 2  # II, Yellow
+    FAIR = 3  # III, Orange
+    POOR = 4  # IV, Red
 
     def to_label(self) -> str:
         """Convert to roman numeral label."""
-        labels = {1: "I", 2: "II", 3: "III", 4: "IV"}
-        return labels[self.value]
+        return {1: "I", 2: "II", 3: "III", 4: "IV"}[self.value]
 
     def to_color(self) -> str:
         """Get color name for rating."""
-        colors = {1: "Green", 2: "Yellow", 3: "Orange", 4: "Red"}
-        return colors[self.value]
+        return {1: "Green", 2: "Yellow", 3: "Orange", 4: "Red"}[self.value]
+
+    @classmethod
+    def from_label(cls, label: str) -> "TAILRating":
+        return cls({"I": 1, "II": 2, "III": 3, "IV": 4}[label])
 
 
 class TAILCategory(str, Enum):
-    """TAIL assessment categories."""
+    """TAIL domains."""
 
     THERMAL = "thermal"
     ACOUSTIC = "acoustic"
@@ -65,11 +148,12 @@ class TAILParameterResult:
     sample_count: int
     summary_value: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    extension: bool = False  # hvx extension (PM10, VOC): not a TAIL parameter
 
 
 @dataclass
 class TAILCategoryResult:
-    """Result for a TAIL category."""
+    """Result for a TAIL domain."""
 
     category: TAILCategory
     rating: TAILRating
@@ -82,29 +166,32 @@ class TAILCategoryResult:
 
 @dataclass
 class TAILOverallResult:
-    """Overall TAIL assessment result."""
+    """Overall TAIL assessment result. ``overall_rating`` is None when nothing could be rated."""
 
-    overall_rating: TAILRating
-    overall_rating_label: str
+    overall_rating: Optional[TAILRating]
+    overall_rating_label: Optional[str]
     overall_compliance_rate: float
     categories: Dict[TAILCategory, TAILCategoryResult]
     total_parameters: int
     visualization: Dict[str, Any]
     parameter_results: List[TAILParameterResult]
+    extensions: List[TAILParameterResult] = field(default_factory=list)
+    not_rated: Dict[str, str] = field(default_factory=dict)  # parameter -> why it was not rated
+
+
+Outcome = Union[TAILParameterResult, str, None]  # result, reason for not rating, or no data
 
 
 class TAILCalculator:
     """
-    Calculator for the TAIL rating scheme.
+    Calculator for the TAIL rating scheme (see module docstring).
 
-    Implements the perform_TAILanalysis workflow:
-    - Filter measurements to working hours based on building type
-    - Categorise each parameter following ALDREN/TAIL guidance
-    - Compute domain ratings using worst-case logic
-    - Provide nested JSON payload that downstream graph renderers can use
+    ``assess_timeseries`` filters to the building type's opening hours unless the
+    caller says the data is already restricted to occupied hours
+    (``occupancy_filtered=True``, as the report pipeline does).
     """
 
-    COLOR_ORDER = ["green", "yellow", "orange", "red"]
+    COLOR_ORDER = list(COLORS)
     COLOR_TO_RATING = {
         "green": TAILRating.EXCELLENT,
         "yellow": TAILRating.GOOD,
@@ -112,11 +199,11 @@ class TAILCalculator:
         "red": TAILRating.POOR,
     }
 
-    # Parameter aliases used when reading sensor names
+    # Sensor names -> TAIL parameter (matched after lower-casing and removing spaces/underscores)
     PARAMETER_ALIASES = {
         "temp": "temperature",
         "temperature": "temperature",
-        "operative_temperature": "temperature",
+        "operativetemperature": "temperature",
         "rh": "relative_humidity",
         "relativehumidity": "relative_humidity",
         "humidity": "relative_humidity",
@@ -124,11 +211,12 @@ class TAILCalculator:
         "co₂": "co2",
         "pm25": "pm25",
         "pm2.5": "pm25",
-        "pm_2_5": "pm25",
         "pm10": "pm10",
         "voc": "voc",
         "tvoc": "voc",
         "formaldehyde": "formaldehyde",
+        "ch2o": "formaldehyde",
+        "hcho": "formaldehyde",
         "benzene": "benzene",
         "radon": "radon",
         "ventilation": "ventilation",
@@ -136,24 +224,22 @@ class TAILCalculator:
         "mold": "mold",
         "mould": "mold",
         "noise": "noise",
-        "noise_level": "noise",
+        "noiselevel": "noise",
         "sound": "noise",
-        "sound_level": "noise",
+        "soundlevel": "noise",
+        "soundpressure": "noise",
         "illuminance": "illuminance",
         "lux": "illuminance",
         "light": "illuminance",
         "daylightfactor": "daylight_factor",
-        "daylight_factor": "daylight_factor",
+        "df": "daylight_factor",
     }
 
     PARAMETER_CATEGORIES = {
         "temperature": TAILCategory.THERMAL,
         "relative_humidity": TAILCategory.IAQ,
-        "humidity": TAILCategory.IAQ,
         "co2": TAILCategory.IAQ,
         "pm25": TAILCategory.IAQ,
-        "pm10": TAILCategory.IAQ,
-        "voc": TAILCategory.IAQ,
         "formaldehyde": TAILCategory.IAQ,
         "benzene": TAILCategory.IAQ,
         "radon": TAILCategory.IAQ,
@@ -163,117 +249,80 @@ class TAILCalculator:
         "illuminance": TAILCategory.LUMINOUS,
         "daylight_factor": TAILCategory.LUMINOUS,
     }
+    # Not TAIL parameters: rated as hvx extensions, outside the domains (config.yaml `extensions`)
+    EXTENSION_CATEGORIES = {"pm10": TAILCategory.IAQ, "voc": TAILCategory.IAQ}
 
-    TEMPERATURE_THRESHOLDS: Dict[str, List[Tuple[str, float, float]]] = {
-        "heating": [
-            ("green", 21.0, 24.0),
-            ("yellow", 20.0, 25.0),
-            ("orange", 18.0, 26.0),
-        ],
-        "non_heating": [
-            ("green", 23.0, 26.0),
-            ("yellow", 22.0, 27.0),
-            ("orange", 21.0, 28.0),
-        ],
-    }
-
-    RH_THRESHOLDS: Dict[str, List[Tuple[str, float, float]]] = {
-        "office": [
-            ("green", 30.0, 60.0),
-            ("yellow", 25.0, 65.0),
-            ("orange", 20.0, 70.0),
-        ],
-        "hotel": [
-            ("green", 30.0, 60.0),
-            ("yellow", 28.0, 65.0),
-            ("orange", 25.0, 70.0),
-        ],
-        "default": [
-            ("green", 30.0, 60.0),
-            ("yellow", 25.0, 65.0),
-            ("orange", 20.0, 70.0),
-        ],
-    }
-
-    POLLUTANT_THRESHOLDS: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {
-        "pm25": [("green", None, 15.0), ("yellow", 15.0, 35.0), ("orange", 35.0, 55.0)],
-        "pm10": [("green", None, 30.0), ("yellow", 30.0, 50.0), ("orange", 50.0, 75.0)],
-        "voc": [("green", None, 300.0), ("yellow", 300.0, 600.0), ("orange", 600.0, 1000.0)],
-        "formaldehyde": [("green", None, 60.0), ("yellow", 60.0, 100.0), ("orange", 100.0, 150.0)],
-        "benzene": [("green", None, 5.0), ("yellow", 5.0, 10.0), ("orange", 10.0, 20.0)],
-        "radon": [("green", None, 100.0), ("yellow", 100.0, 200.0), ("orange", 200.0, 300.0)],
-    }
-
-    NOISE_THRESHOLDS: Dict[str, Dict[str, float]] = {
-        "small_office": {"green": 38.0, "yellow": 42.0, "orange": 48.0},
-        "open_office": {"green": 45.0, "yellow": 50.0, "orange": 55.0},
-        "hotel": {"green": 35.0, "yellow": 40.0, "orange": 45.0},
-        "default": {"green": 40.0, "yellow": 45.0, "orange": 55.0},
-    }
-
-    ILLUMINANCE_TARGETS = {
-        "office": 500.0,
-        "school": 300.0,
-        "hotel": 200.0,
-        "default": 300.0,
-    }
-
-    DAYLIGHT_THRESHOLDS = [
-        ("green", 2.0, None),
-        ("yellow", 1.5, 2.0),
-        ("orange", 1.0, 1.5),
-    ]
-
-    VENTILATION_PER_PERSON_LPS = 10.0  # l/s per occupant per ALDREN guidance
+    # ------------------------------------------------------------------ public API
+    @classmethod
+    def config(cls, overrides: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        """config.yaml, with ``overrides`` deep-merged into its ``parameters`` section."""
+        cfg = load_config()
+        if overrides:
+            cfg["parameters"] = _deep_merge(cfg.get("parameters") or {}, overrides)
+        return cfg
 
     @classmethod
     def assess_instant_values(
         cls,
         measured_values: Dict[str, float],
-        thresholds: Dict[str, Dict[str, float]],
+        thresholds: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> TAILOverallResult:
-        """
-        Convenience wrapper to score a snapshot of measurements.
-        """
-
-        series_data = {
-            param: pd.Series([value]) for param, value in measured_values.items()
-        }
-        return cls.assess_timeseries(series_data, thresholds, metadata=metadata)
+        """Score a snapshot of measurements (one sample per parameter, no timestamps)."""
+        series_data = {param: pd.Series([value]) for param, value in measured_values.items()}
+        return cls.assess_timeseries(series_data, thresholds, metadata=metadata, occupancy_filtered=True)
 
     @classmethod
     def assess_timeseries(
         cls,
         timeseries_data: Dict[str, pd.Series],
-        thresholds: Dict[str, Dict[str, float]],
+        thresholds: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         building_name: Optional[str] = None,
+        occupancy_filtered: Optional[bool] = None,
     ) -> TAILOverallResult:
         """
-        Assess TAIL rating from time series data following the TAIL algorithm.
-        """
+        Rate time series following tail.R.
 
-        metadata = metadata or {}
-        filtered_series = cls._prepare_series(timeseries_data, metadata.get("building_type"))
+        Args:
+            timeseries_data: ``{sensor name: Series}``, ideally with a DatetimeIndex.
+                Timezone-aware indexes are converted to the building's local time
+                (``metadata["timezone"]``, else the timestamps' own offset).
+            thresholds: optional overrides deep-merged into config.yaml's
+                ``parameters`` (e.g. ``{"co2": {"outdoor_ppm": 400}}``).
+            metadata: ``building_type``, ``room_type``, ``area_m2``,
+                ``design_occupancy`` (persons), ``timezone``, ``outdoor_co2_ppm``,
+                ``season_hint`` ("heating"/"non_heating", only used without timestamps).
+            occupancy_filtered: True when the data is already restricted to
+                occupied hours; otherwise the building type's opening hours are
+                applied. Defaults to ``metadata["occupancy_filtered"]``.
+        """
+        metadata = dict(metadata or {})
+        if occupancy_filtered is None:
+            occupancy_filtered = bool(metadata.get("occupancy_filtered", False))
+        cfg = cls.config(thresholds)
+        prepared = cls._prepare_series(timeseries_data, metadata, occupancy_filtered)
 
         parameter_results: List[TAILParameterResult] = []
-
-        for param_name, series in filtered_series.items():
+        extensions: List[TAILParameterResult] = []
+        not_rated: Dict[str, str] = {}
+        seen = set()
+        for param_name, series in prepared.items():
             normalized = cls._normalize_parameter_name(param_name)
-            category = cls.PARAMETER_CATEGORIES.get(normalized)
-            if category is None:
+            if normalized in seen:
                 continue
-
-            evaluator = cls._get_parameter_evaluator(normalized)
-            if evaluator:
-                result = evaluator(series, metadata)
+            if normalized in cls.PARAMETER_CATEGORIES:
+                evaluator = cls._get_parameter_evaluator(normalized)
+                outcome = evaluator(series, metadata, cfg)
+            elif normalized in cls.EXTENSION_CATEGORIES:
+                outcome = cls._evaluate_extension(normalized, series, cfg)
             else:
-                threshold = thresholds.get(param_name) or thresholds.get(normalized)
-                result = cls._evaluate_generic(normalized, series, category, threshold or {})
-
-            if result:
-                parameter_results.append(result)
+                continue
+            seen.add(normalized)
+            if isinstance(outcome, str):
+                not_rated[normalized] = outcome
+            elif outcome is not None:
+                (extensions if outcome.extension else parameter_results).append(outcome)
 
         category_results = cls._build_category_results(parameter_results)
         overall_rating, overall_compliance = cls._summarize_overall(category_results)
@@ -284,72 +333,66 @@ class TAILCalculator:
             overall_compliance=overall_compliance,
             metadata=metadata,
             building_name=building_name,
+            extensions=extensions,
+            not_rated=not_rated,
         )
-
         return TAILOverallResult(
             overall_rating=overall_rating,
-            overall_rating_label=overall_rating.to_label(),
+            overall_rating_label=overall_rating.to_label() if overall_rating else None,
             overall_compliance_rate=round(overall_compliance, 2),
             categories=category_results,
             total_parameters=len(parameter_results),
             visualization=visualization,
             parameter_results=parameter_results,
+            extensions=extensions,
+            not_rated=not_rated,
         )
 
-    # ------------------------------------------------------------------ helpers
+    # ------------------------------------------------------------------ preparation
+    @staticmethod
+    def to_local_index(index: pd.Index, timezone: Optional[str] = None) -> pd.Index:
+        """Timezone-aware index -> naive local wall-clock time (``timezone`` if given)."""
+        if isinstance(index, pd.DatetimeIndex) and index.tz is not None:
+            if timezone:
+                index = index.tz_convert(timezone)
+            return index.tz_localize(None)
+        return index
+
     @classmethod
     def _prepare_series(
         cls,
         timeseries_data: Dict[str, pd.Series],
-        building_type: Optional[str],
+        metadata: Dict[str, Any],
+        occupancy_filtered: bool,
     ) -> Dict[str, pd.Series]:
-        """Filter data by weekdays/working hours."""
-
-        filtered: Dict[str, pd.Series] = {}
-        mask = cls._build_schedule_mask(timeseries_data, building_type)
-
+        """Local time; opening-hours filter unless the caller already applied one."""
+        profile = None if occupancy_filtered else get_opening_profile_for_building_type(
+            normalize_type(metadata.get("building_type")) or None
+        )
+        prepared: Dict[str, pd.Series] = {}
         for param, series in timeseries_data.items():
             if not isinstance(series, pd.Series) or series.empty:
                 continue
-
-            aligned_series = series.copy()
-            if mask is not None and isinstance(aligned_series.index, pd.DatetimeIndex):
-                aligned_mask = mask.reindex(aligned_series.index)
-                aligned_mask = aligned_mask.fillna(False)
-                aligned_series = aligned_series[aligned_mask]
-
-            filtered[param] = aligned_series.dropna()
-
-        return filtered
-
-    @classmethod
-    def _build_schedule_mask(
-        cls, series_dict: Dict[str, pd.Series], building_type: Optional[str]
-    ) -> Optional[pd.Series]:
-        """Create occupancy mask for weekdays + working hours."""
-
-        for series in series_dict.values():
-            if isinstance(series, pd.Series) and isinstance(series.index, pd.DatetimeIndex):
-                if not series.index.empty:
-                    profile = get_opening_profile_for_building_type(building_type)
-                    return generate_occupancy_mask(series.index, profile)
-        return None
+            series = series.copy()
+            series.index = cls.to_local_index(series.index, metadata.get("timezone"))
+            if profile is not None and isinstance(series.index, pd.DatetimeIndex):
+                mask = generate_occupancy_mask(series.index, profile)
+                series = series[mask.to_numpy(dtype=bool)]
+            prepared[param] = series.dropna()
+        return prepared
 
     @classmethod
     def _normalize_parameter_name(cls, parameter: str) -> str:
-        token = parameter.lower().replace(" ", "").replace("_", "")
-        return cls.PARAMETER_ALIASES.get(token, parameter.lower())
+        token = str(parameter).lower().replace(" ", "").replace("_", "")
+        return cls.PARAMETER_ALIASES.get(token, str(parameter).lower())
 
-    # ---------------------------------------------------------------- parameter dispatch
     @classmethod
-    def _get_parameter_evaluator(cls, parameter: str):
+    def _get_parameter_evaluator(cls, parameter: str) -> Callable[..., Outcome]:
         evaluators = {
             "temperature": cls._evaluate_temperature,
             "relative_humidity": cls._evaluate_humidity,
             "co2": cls._evaluate_co2,
             "pm25": cls._evaluate_pm25,
-            "pm10": cls._evaluate_pm10,
-            "voc": cls._evaluate_voc,
             "formaldehyde": cls._evaluate_formaldehyde,
             "benzene": cls._evaluate_benzene,
             "radon": cls._evaluate_radon,
@@ -359,313 +402,386 @@ class TAILCalculator:
             "illuminance": cls._evaluate_illuminance,
             "daylight_factor": cls._evaluate_daylight_factor,
         }
-        return evaluators.get(parameter)
+        return evaluators[parameter]
 
     @classmethod
-    def _evaluate_temperature(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _is_hotel(cls, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> bool:
+        hotel_types = {normalize_type(t) for t in cfg.get("hotel_building_types") or []}
+        return normalize_type(metadata.get("building_type")) in hotel_types
+
+    @classmethod
+    def _building_rule(cls, metadata: Dict[str, Any], cfg: Dict[str, Any], pcfg: Dict[str, Any]) -> str:
+        """tail.R's BuildingType for RH and illuminance: 'hotel' or 'office' (also the default)."""
+        return "hotel" if cls._is_hotel(metadata, cfg) else str(pcfg.get("default_building_type", "office"))
+
+    # ------------------------------------------------------------------ thermal
+    @classmethod
+    def _evaluate_temperature(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["temperature"]
+        values = cls._numeric_series(series)
+        if values.empty:
             return None
-
-        season_hint = metadata.get("season_hint")
-        season = cls._determine_season(series.index, season_hint)
-        thresholds = cls.TEMPERATURE_THRESHOLDS[season]
-        counts = cls._count_by_thresholds(series, thresholds)
-        summary = float(series.mean())
-
+        values = r_round(values, int(pcfg["round"]))  # l.84
+        if isinstance(values.index, pd.DatetimeIndex):
+            # Season per sample by month (l.85-87): heating October-May, non-heating June-September.
+            heating = np.asarray(values.index.month.isin(list(pcfg["heating_months"])))
+            season_basis = "month of each sample"
+        else:
+            hint = cls._season_from_hint(metadata.get("season_hint"))
+            if hint is None:
+                return "No timestamps: the heating/non-heating season (by month) is unknown."
+            heating = np.full(len(values), hint == "heating")
+            season_basis = f"season hint '{hint}' (no timestamps)"
+        bands = pcfg["bands"]
+        colors = np.where(
+            heating,
+            cls._band_colors(values, bands["heating"]),  # l.89-94
+            cls._band_colors(values, bands["non_heating"]),  # l.95-100
+        )
+        counts = cls._color_counts(colors)
+        rating = cls._time_share_rating(counts, cfg["time_share_rule"])  # l.357-369
         return cls._build_parameter_result(
             parameter="temperature",
             category=TAILCategory.THERMAL,
+            rating=rating,
             counts=counts,
-            sample_count=int(series.size),
-            summary_value=round(summary, 2),
-            metadata={"season": season, "thresholds": thresholds},
+            sample_count=int(values.size),
+            summary_value=round(float(values.mean()), 2),
+            metadata={
+                "rule": "time shares (cumulative reading of tail.R l.357-369)",
+                "season_basis": season_basis,
+                "heating_samples": int(heating.sum()),
+                "non_heating_samples": int((~heating).sum()),
+                "bands": bands,
+            },
         )
 
     @classmethod
-    def _evaluate_humidity(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _evaluate_humidity(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["relative_humidity"]
+        values = cls._numeric_series(series)
+        if values.empty:
             return None
-        series = series[(series >= 1.0) & (series <= 100.0)].round()
-        if series.empty:
-            return None
-
-        building_type = (metadata.get("building_type") or "default").lower()
-        if building_type not in cls.RH_THRESHOLDS:
-            building_type = "default"
-
-        thresholds = cls.RH_THRESHOLDS[building_type]
-        counts = cls._count_by_thresholds(series, thresholds)
-
+        values = values.where(values >= pcfg["floor"], float(pcfg["floor"]))  # l.108-109
+        values = values.where(values <= 100, float(pcfg["above_100"]))  # l.110
+        values = r_round(values, int(pcfg["round"]))  # l.111
+        rule = cls._building_rule(metadata, cfg, pcfg)
+        bands = pcfg["bands"][rule]  # l.113-123
+        counts = cls._color_counts(cls._band_colors(values, bands))
+        rating = cls._time_share_rating(counts, cfg["time_share_rule"])  # l.457-470
         return cls._build_parameter_result(
             parameter="relative_humidity",
             category=TAILCategory.IAQ,
+            rating=rating,
             counts=counts,
-            sample_count=int(series.size),
-            summary_value=round(float(series.mean()), 2),
-            metadata={"building_type": building_type, "thresholds": thresholds},
+            sample_count=int(values.size),
+            summary_value=round(float(values.mean()), 2),
+            metadata={
+                "rule": "time shares (cumulative reading of tail.R l.457-470)",
+                "building_type_rule": rule,
+                "building_type": metadata.get("building_type"),
+                "bands": bands,
+            },
         )
 
-    # Pollutants ---------------------------------------------------------------------------
+    # ------------------------------------------------------------------ indoor air
     @classmethod
-    def _evaluate_pm25(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        return cls._evaluate_pollutant_series("pm25", series, metadata)
-
-    @classmethod
-    def _evaluate_pm10(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        return cls._evaluate_pollutant_series("pm10", series, metadata)
-
-    @classmethod
-    def _evaluate_voc(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        return cls._evaluate_pollutant_series("voc", series, metadata)
-
-    @classmethod
-    def _evaluate_formaldehyde(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        return cls._evaluate_pollutant_series("formaldehyde", series, metadata)
-
-    @classmethod
-    def _evaluate_benzene(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        return cls._evaluate_pollutant_series("benzene", series, metadata)
-
-    @classmethod
-    def _evaluate_radon(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        return cls._evaluate_pollutant_series("radon", series, metadata)
-
-    @classmethod
-    def _evaluate_pollutant_series(
-        cls, parameter: str, series: pd.Series, metadata: Dict[str, Any]
-    ) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _evaluate_co2(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["co2"]
+        values = cls._numeric_series(series)
+        if values.empty:
             return None
-
-        thresholds = cls.POLLUTANT_THRESHOLDS[parameter]
-        counts = cls._count_by_thresholds(series, thresholds)
-
-        return cls._build_parameter_result(
-            parameter=parameter,
-            category=TAILCategory.IAQ,
-            counts=counts,
-            sample_count=int(series.size),
-            summary_value=round(float(series.mean()), 2),
-            metadata={"thresholds": thresholds},
-        )
-
-    # IAQ specific calculations -------------------------------------------------------------
-    @classmethod
-    def _evaluate_co2(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
-            return None
-
-        p95 = float(series.quantile(0.95))
-        thresholds = [("green", None, 800.0), ("yellow", 800.0, 1000.0), ("orange", 1000.0, 1400.0)]
-        label_counts = cls._counts_from_single_value(p95, thresholds)
-
+        outdoor = metadata.get("outdoor_co2_ppm")
+        outdoor = float(pcfg["outdoor_ppm"] if outdoor is None else outdoor)
+        values = values.where(values >= outdoor, outdoor)  # l.153
+        p95 = float(values.quantile(pcfg["percentile"] / 100.0))  # l.157 (R type 7 = pandas linear)
+        limits = {c: outdoor + float(v) for c, v in pcfg["above_outdoor"].items()}  # 970/1220/1770 (l.163-166)
+        color = cls._color_at_most(p95, limits)
+        counts = cls._color_counts(np.array([cls._color_at_most(v, limits) for v in values]))
         return cls._build_parameter_result(
             parameter="co2",
             category=TAILCategory.IAQ,
-            counts=label_counts,
-            sample_count=1,
+            rating=cls.COLOR_TO_RATING[color],
+            counts=counts,
+            sample_count=int(values.size),
             summary_value=round(p95, 2),
-            metadata={"percentile": 95, "thresholds": thresholds},
+            metadata={
+                "rule": f"P{pcfg['percentile']} of occupied values (tail.R l.156-168)",
+                "percentile": pcfg["percentile"],
+                "outdoor_ppm": outdoor,
+                "limits_ppm": limits,
+            },
         )
 
     @classmethod
-    def _evaluate_ventilation(
-        cls, series: pd.Series, metadata: Dict[str, Any]
-    ) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _evaluate_pm25(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        return cls._evaluate_pollutant("pm25", series, cfg)  # l.131-144, 515-527
+
+    @classmethod
+    def _evaluate_formaldehyde(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        return cls._evaluate_pollutant("formaldehyde", series, cfg)  # l.175-189, 497-509
+
+    @classmethod
+    def _evaluate_benzene(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        return cls._evaluate_pollutant("benzene", series, cfg)  # l.192-205, 479-491
+
+    @classmethod
+    def _evaluate_radon(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        return cls._evaluate_pollutant("radon", series, cfg)  # l.208-221, 534-546
+
+    @classmethod
+    def _evaluate_pollutant(cls, parameter: str, series: pd.Series, cfg: Dict[str, Any]) -> Outcome:
+        """Green/Yellow/Red pollutants: any Red -> IV, else any Yellow -> II, else I."""
+        limits = cfg["parameters"][parameter]["limits"]
+        values = cls._numeric_series(series)
+        values = values[values >= 0]  # negative -> NA
+        if values.empty:
             return None
+        values = values.where(values >= 1, 0.0)  # values under 1 -> 0
+        values = r_round(values, 0)
+        v = values.to_numpy()
+        colors = np.where(v < limits["green_below"], "green", np.where(v < limits["yellow_below"], "yellow", "red"))
+        counts = cls._color_counts(colors)
+        if counts["red"]:
+            rating = TAILRating.POOR
+        elif counts["yellow"]:
+            rating = TAILRating.GOOD
+        else:
+            rating = TAILRating.EXCELLENT
+        return cls._build_parameter_result(
+            parameter=parameter,
+            category=TAILCategory.IAQ,
+            rating=rating,
+            counts=counts,
+            sample_count=int(values.size),
+            summary_value=round(float(values.max()), 2),
+            metadata={"rule": "any Red sample -> IV, any Yellow -> II, else I", "summary": "maximum", "limits": limits},
+        )
 
-        required = cls._ventilation_requirement(metadata)
-        ratio_series = series / required["per_person_rate_lps"]
-        thresholds = [
-            ("green", 1.0, None),
-            ("yellow", 0.8, 1.0),
-            ("orange", 0.6, 0.8),
-        ]
-        counts = cls._count_by_thresholds(ratio_series, thresholds)
-
+    @classmethod
+    def _evaluate_ventilation(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["ventilation"]
+        values = cls._numeric_series(series)
+        if values.empty:
+            return None
+        persons = cls._first_number(metadata, ("design_occupancy", "design_occupants", "persons", "occupancy"))
+        area = cls._first_number(metadata, ("area_m2", "floor_area_m2"))
+        missing = [name for name, value in (("number of persons", persons), ("floor area", area)) if value is None]
+        if missing:
+            return ("Not rated: the TAIL ventilation limits (l/s per person plus l/s per m²) need the "
+                    + " and ".join(missing) + " of the space.")
+        values = r_round(values, int(pcfg["round"]))  # l.227
+        values = values[values >= 0]  # l.228
+        if values.empty:
+            return None
+        # l.58-60: required supply = per person * persons + per m² * floor area
+        limits = {c: pcfg["per_person"][c] * persons + pcfg["per_m2"][c] * area for c in ("green", "yellow", "orange")}
+        colors = np.array([cls._color_at_least(v, limits) for v in values])  # l.229-235
+        counts = cls._color_counts(colors)
         return cls._build_parameter_result(
             parameter="ventilation",
             category=TAILCategory.IAQ,
+            rating=cls._worst_rating(counts),  # l.408-422: worst category
             counts=counts,
-            sample_count=int(series.size),
-            summary_value=round(float(series.mean()), 2),
-            metadata={"requirement": required, "thresholds": thresholds},
+            sample_count=int(values.size),
+            summary_value=round(float(values.min()), 2),
+            metadata={"rule": "worst sample", "summary": "minimum", "persons": persons, "area_m2": area,
+                      "limits_l_s": {c: round(v, 2) for c, v in limits.items()}},
         )
 
     @classmethod
-    def _evaluate_mold(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        if not isinstance(series, pd.Series) or series.empty:
+    def _evaluate_mold(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["mold"]
+        if not isinstance(series, pd.Series) or series.dropna().empty:
             return None
 
-        counts = {color: 0 for color in cls.COLOR_ORDER}
-        normalized_entries = series.astype(str).str.lower()
+        def norm(text: Any) -> str:
+            return re.sub(r"\s+", " ", str(text).strip().lower())
 
-        for entry in normalized_entries:
-            if any(term in entry for term in ["no visible", "none detected", "absent"]):
-                color = "green"
-            elif any(term in entry for term in ["trace", "isolated", "minor"]):
-                color = "yellow"
-            elif any(term in entry for term in ["localized", "surface", "moderate"]):
-                color = "orange"
+        lookup: Dict[str, str] = {}
+        for source in ("keys", "phrases"):  # tail.R's phrases win over short keys
+            for color, entries in (pcfg.get(source) or {}).items():
+                for entry in entries:
+                    lookup[norm(entry)] = color
+        area_limits = pcfg["area_cm2"]
+        colors: List[str] = []
+        unrecognised: List[str] = []
+        for entry in series.dropna():
+            color: Optional[str]
+            if isinstance(entry, (int, float, np.number)) and not isinstance(entry, bool):
+                area = float(entry)  # visible mould area in cm²
+                if area < 0:
+                    color = None
+                elif area == 0:
+                    color = "green"
+                elif area < area_limits["yellow_below"]:
+                    color = "yellow"
+                elif area < area_limits["orange_below"]:
+                    color = "orange"
+                else:
+                    color = "red"
             else:
-                color = "red"
-            counts[color] += 1
-
+                color = lookup.get(norm(entry))  # l.245-248
+            if color is None:
+                unrecognised.append(str(entry))
+            else:
+                colors.append(color)
+        if not colors:
+            return "Not rated: no mould observation matches tail.R's inspection phrases."
+        counts = cls._color_counts(np.array(colors))
+        meta: Dict[str, Any] = {"rule": "worst observation (tail.R l.430-440)"}
+        if unrecognised:
+            meta["unrecognised"] = unrecognised[:10]
         return cls._build_parameter_result(
             parameter="mold",
             category=TAILCategory.IAQ,
+            rating=cls._worst_rating(counts),
             counts=counts,
-            sample_count=len(normalized_entries),
+            sample_count=len(colors),
             summary_value=None,
-            metadata={},
+            metadata=meta,
         )
 
-    # Acoustic ------------------------------------------------------------------------------
+    # ------------------------------------------------------------------ acoustic
     @classmethod
-    def _evaluate_noise(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _noise_room_type(cls, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[str]:
+        room_types = cfg["parameters"]["noise"]["room_types"]
+        room = normalize_type(metadata.get("room_type"))
+        for key, aliases in room_types.items():
+            if room == key or room in {normalize_type(a) for a in aliases}:
+                return key
+        if not room and cls._is_hotel(metadata, cfg):
+            return "hotel"
+        return None
+
+    @classmethod
+    def _evaluate_noise(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["noise"]
+        values = cls._numeric_series(series)
+        if values.empty:
             return None
-
-        noise_p5 = float(np.percentile(series, 5))
-        room_type = (metadata.get("room_type") or metadata.get("building_type") or "default").lower()
-        if room_type not in cls.NOISE_THRESHOLDS:
-            room_type = "default"
-
-        threshold = cls.NOISE_THRESHOLDS[room_type]
-        counts = cls._counts_from_single_value(noise_p5, [
-            ("green", None, threshold["green"]),
-            ("yellow", threshold["green"], threshold["yellow"]),
-            ("orange", threshold["yellow"], threshold["orange"]),
-        ])
-
+        room_type = cls._noise_room_type(metadata, cfg)
+        if room_type is None:
+            return (f"Not rated: TAIL sets noise limits for small offices, open offices and hotel rooms only "
+                    f"(room type '{metadata.get('room_type') or 'unknown'}').")
+        values = r_round(values, int(pcfg["round"]))  # l.260
+        values = values.where(values >= pcfg["floor"], float(pcfg["floor"]))  # l.261
+        p5 = float(values.quantile(pcfg["percentile"] / 100.0))  # l.265
+        limits = {c: float(v) for c, v in pcfg["limits"][room_type].items()}
+        color = cls._color_at_most(p5, limits)  # l.271-282
+        counts = cls._color_counts(np.array([cls._color_at_most(v, limits) for v in values]))
         return cls._build_parameter_result(
             parameter="noise",
             category=TAILCategory.ACOUSTIC,
+            rating=cls.COLOR_TO_RATING[color],
             counts=counts,
-            sample_count=1,
-            summary_value=round(noise_p5, 2),
-            metadata={"room_type": room_type, "thresholds": threshold},
+            sample_count=int(values.size),
+            summary_value=round(p5, 2),
+            metadata={"rule": f"P{pcfg['percentile']} (tail.R l.264-284)", "percentile": pcfg["percentile"],
+                      "room_type": room_type, "limits_db": limits},
         )
 
-    # Luminous -----------------------------------------------------------------------------
+    # ------------------------------------------------------------------ luminous
     @classmethod
-    def _evaluate_illuminance(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _evaluate_illuminance(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        pcfg = cfg["parameters"]["illuminance"]
+        values = cls._numeric_series(series)
+        if values.empty:
             return None
-
-        building_type = (metadata.get("building_type") or "default").lower()
-        target = cls.ILLUMINANCE_TARGETS.get(building_type, cls.ILLUMINANCE_TARGETS["default"])
-        compliance_pct = float((series >= target).sum() / len(series) * 100.0)
-
-        counts = cls._counts_from_single_value(
-            compliance_pct,
-            [
-                ("green", 95.0, None),
-                ("yellow", 70.0, 95.0),
-                ("orange", 50.0, 70.0),
-            ],
-            red_if_below=True,
-        )
-
+        values = values.where(values >= pcfg["floor"], float(pcfg["floor"]))  # l.292
+        rule = cls._building_rule(metadata, cfg, pcfg)
+        rcfg = pcfg[rule]
+        if rule == "hotel":
+            # l.309-314: share of time at or above 100 lx
+            share = float((values >= rcfg["at_least_lux"]).mean() * 100.0)
+            if share <= rcfg["green_max_pct"]:
+                color = "green"
+            elif share <= rcfg["yellow_max_pct"]:
+                color = "yellow"
+            elif share <= rcfg["orange_max_pct"]:
+                color = "orange"
+            else:
+                color = "red"
+            basis = f"share of time >= {rcfg['at_least_lux']} lx"
+        else:
+            # l.301-306: share of time within 300-500 lx
+            low, high = rcfg["within_lux"]
+            share = float(((values >= low) & (values <= high)).mean() * 100.0)
+            if share > rcfg["green_above_pct"]:
+                color = "green"
+            elif share >= rcfg["yellow_min_pct"]:
+                color = "yellow"
+            elif share >= rcfg["orange_min_pct"]:
+                color = "orange"
+            else:
+                color = "red"
+            basis = f"share of time within {low}-{high} lx"
+        counts = {c: 0 for c in COLORS}
+        counts[color] = 1
         return cls._build_parameter_result(
             parameter="illuminance",
             category=TAILCategory.LUMINOUS,
+            rating=cls.COLOR_TO_RATING[color],
             counts=counts,
-            sample_count=1,
-            summary_value=round(compliance_pct, 2),
-            metadata={"target_lux": target, "percentage_compliant": compliance_pct},
+            sample_count=int(values.size),
+            summary_value=round(share, 2),
+            metadata={"rule": basis, "building_type_rule": rule, "share_pct": round(share, 2), "limits": rcfg},
+            compliance=share if rule != "hotel" else None,
         )
 
     @classmethod
-    def _evaluate_daylight_factor(cls, series: pd.Series, metadata: Dict[str, Any]) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty:
+    def _evaluate_daylight_factor(cls, series: pd.Series, metadata: Dict[str, Any], cfg: Dict[str, Any]) -> Outcome:
+        limits = cfg["parameters"]["daylight_factor"]["min"]
+        values = cls._numeric_series(series)
+        if values.empty:
             return None
-
-        thresholds = cls.DAYLIGHT_THRESHOLDS
-        counts = cls._count_by_thresholds(series, thresholds)
-
+        counts = cls._color_counts(np.array([cls._color_at_least(v, limits) for v in values]))  # l.328-333
         return cls._build_parameter_result(
             parameter="daylight_factor",
             category=TAILCategory.LUMINOUS,
+            rating=cls._worst_rating(counts),  # l.620-631
             counts=counts,
-            sample_count=int(series.size),
-            summary_value=round(float(series.mean()), 2),
-            metadata={"thresholds": thresholds},
+            sample_count=int(values.size),
+            summary_value=round(float(values.min()), 2),
+            metadata={"rule": "worst value", "summary": "minimum", "limits_pct": limits},
         )
 
-    # Generic ------------------------------------------------------------------------------
+    # ------------------------------------------------------------------ hvx extensions
     @classmethod
-    def _evaluate_generic(
-        cls,
-        parameter: str,
-        series: pd.Series,
-        category: TAILCategory,
-        thresholds: Dict[str, float],
-    ) -> Optional[TAILParameterResult]:
-        series = cls._numeric_series(series)
-        if series.empty or not thresholds:
+    def _evaluate_extension(cls, parameter: str, series: pd.Series, cfg: Dict[str, Any]) -> Outcome:
+        pcfg = (cfg.get("extensions") or {}).get(parameter)
+        values = cls._numeric_series(series)
+        if not pcfg or values.empty:
             return None
-
-        lower = thresholds.get("lower", float("-inf"))
-        upper = thresholds.get("upper", float("inf"))
-        span = upper - lower if np.isfinite(lower) and np.isfinite(upper) else None
-
-        counts = {color: 0 for color in cls.COLOR_ORDER}
-        for value in series:
-            if lower <= value <= upper:
-                counts["green"] += 1
-            elif span is not None:
-                delta = min(abs(value - upper), abs(value - lower))
-                if delta <= 0.05 * span:
-                    counts["yellow"] += 1
-                elif delta <= 0.15 * span:
-                    counts["orange"] += 1
-                else:
-                    counts["red"] += 1
-            else:
-                counts["red"] += 1
-
+        counts = cls._color_counts(cls._band_colors(values, pcfg["bands"]))
         return cls._build_parameter_result(
             parameter=parameter,
-            category=category,
+            category=cls.EXTENSION_CATEGORIES[parameter],
+            rating=cls._worst_rating(counts),
             counts=counts,
-            sample_count=int(series.size),
-            summary_value=round(float(series.mean()), 2),
-            metadata={"thresholds": thresholds},
+            sample_count=int(values.size),
+            summary_value=round(float(values.mean()), 2),
+            metadata={"rule": "worst sample (hvx limits)", "note": "hvx extension, not a TAIL parameter",
+                      "bands": pcfg["bands"]},
+            extension=True,
         )
 
-    # ---------------------------------------------------------------- aggregation helpers
+    # ------------------------------------------------------------------ aggregation
     @classmethod
     def _build_category_results(
         cls, parameter_results: List[TAILParameterResult]
     ) -> Dict[TAILCategory, TAILCategoryResult]:
-        grouped: Dict[TAILCategory, List[TAILParameterResult]] = {
-            cat: [] for cat in TAILCategory
-        }
+        grouped: Dict[TAILCategory, List[TAILParameterResult]] = {cat: [] for cat in TAILCategory}
         for result in parameter_results:
-            grouped[result.category].append(result)
+            if not result.extension:
+                grouped[result.category].append(result)
 
         category_results: Dict[TAILCategory, TAILCategoryResult] = {}
         for category, params in grouped.items():
             if not params:
                 continue
-
-            worst_rating = max(param.rating for param in params)
-            compliance = sum(
-                param.metadata.get("compliance_rate", 0.0) for param in params
-            ) / len(params)
-
-            dominant_color = cls._worst_color_from_params(params)
-
+            worst_rating = max(param.rating for param in params)  # worst parameter (l.554, 640)
+            compliance = sum(param.metadata.get("compliance_rate", 0.0) for param in params) / len(params)
             category_results[category] = TAILCategoryResult(
                 category=category,
                 rating=worst_rating,
@@ -673,42 +789,54 @@ class TAILCalculator:
                 compliance_rate=round(compliance, 2),
                 parameter_count=len(params),
                 parameters=params,
-                dominant_color=dominant_color,
+                dominant_color=worst_rating.to_color(),
             )
-
         return category_results
 
     @classmethod
     def _summarize_overall(
         cls, category_results: Dict[TAILCategory, TAILCategoryResult]
-    ) -> Tuple[TAILRating, float]:
+    ) -> Tuple[Optional[TAILRating], float]:
         if not category_results:
-            return TAILRating.POOR, 0.0
-
-        worst_rating = max(category.rating for category in category_results.values())
-        compliance = sum(cat.compliance_rate for cat in category_results.values()) / len(
-            category_results
-        )
+            return None, 0.0
+        worst_rating = max(category.rating for category in category_results.values())  # l.652
+        compliance = sum(cat.compliance_rate for cat in category_results.values()) / len(category_results)
         return worst_rating, compliance
+
+    @classmethod
+    def _parameter_payload(cls, param: TAILParameterResult) -> Dict[str, Any]:
+        return {
+            "rating": param.rating_label,
+            "rating_color": param.rating.to_color(),
+            "dominant_color": param.dominant_color,
+            "distribution": param.distribution,
+            "samples": param.sample_count,
+            "summary_value": param.summary_value,
+            "metadata": param.metadata,
+        }
 
     @classmethod
     def _build_visualization(
         cls,
         parameter_results: List[TAILParameterResult],
         category_results: Dict[TAILCategory, TAILCategoryResult],
-        overall_rating: TAILRating,
+        overall_rating: Optional[TAILRating],
         overall_compliance: float,
         metadata: Dict[str, Any],
         building_name: Optional[str],
+        extensions: Optional[List[TAILParameterResult]] = None,
+        not_rated: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         visualization: Dict[str, Any] = {
             "entity": building_name or metadata.get("entity_name"),
             "overall": {
-                "rating": overall_rating.to_label(),
-                "rating_color": overall_rating.to_color(),
+                "rating": overall_rating.to_label() if overall_rating else None,
+                "rating_color": overall_rating.to_color() if overall_rating else None,
                 "compliance": round(overall_compliance, 2),
             },
             "domains": {},
+            "extensions": {p.parameter: cls._parameter_payload(p) for p in extensions or []},
+            "not_rated": dict(not_rated or {}),
             "metadata": {
                 "building_type": metadata.get("building_type"),
                 "room_type": metadata.get("room_type"),
@@ -716,160 +844,159 @@ class TAILCalculator:
                 "design_occupancy": metadata.get("design_occupancy"),
             },
         }
-
         for category, result in category_results.items():
-            domain_payload = {
+            visualization["domains"][category.value] = {
                 "rating": result.rating_label,
                 "rating_color": result.rating.to_color(),
                 "compliance": result.compliance_rate,
                 "dominant_color": result.dominant_color,
-                "parameters": {},
+                "parameters": {p.parameter: cls._parameter_payload(p) for p in result.parameters},
             }
-            for param in result.parameters:
-                domain_payload["parameters"][param.parameter] = {
-                    "rating": param.rating_label,
-                    "rating_color": param.rating.to_color(),
-                    "dominant_color": param.dominant_color,
-                    "distribution": param.distribution,
-                    "samples": param.sample_count,
-                    "summary_value": param.summary_value,
-                    "metadata": param.metadata,
-                }
-            visualization["domains"][category.value] = domain_payload
-
         return visualization
 
-    # ---------------------------------------------------------------- utility helpers
+    # ------------------------------------------------------------------ rules and helpers
     @classmethod
     def _numeric_series(cls, series: pd.Series) -> pd.Series:
         if not isinstance(series, pd.Series):
             return pd.Series(dtype=float)
-        numeric = pd.to_numeric(series, errors="coerce")
-        return numeric.dropna()
+        return pd.to_numeric(series, errors="coerce").dropna().astype(float)
 
-    @classmethod
-    def _count_by_thresholds(
-        cls,
-        series: pd.Series,
-        thresholds: List[Tuple[str, Optional[float], Optional[float]]],
-    ) -> Dict[str, int]:
-        counts = {color: 0 for color in cls.COLOR_ORDER}
-        for value in series:
-            color = cls._color_from_thresholds(value, thresholds)
-            counts[color] += 1
-        return counts
+    @staticmethod
+    def _first_number(metadata: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[float]:
+        for key in keys:
+            value = metadata.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(number) and number >= 0:
+                return number
+        return None
 
-    @classmethod
-    def _color_from_thresholds(
-        cls,
-        value: float,
-        thresholds: List[Tuple[str, Optional[float], Optional[float]]],
-        red_if_below: bool = False,
-    ) -> str:
-        for color, lower, upper in thresholds:
-            lower_check = lower if lower is not None else float("-inf")
-            upper_check = upper if upper is not None else float("inf")
-            if lower_check <= value <= upper_check:
+    @staticmethod
+    def _season_from_hint(hint: Optional[str]) -> Optional[str]:
+        token = normalize_type(hint)
+        if token in ("heating", "winter", "autumn"):
+            return "heating"
+        if token in ("non_heating", "nonheating", "cooling", "summer"):
+            return "non_heating"
+        return None
+
+    @staticmethod
+    def _band_colors(values: pd.Series, bands: Mapping[str, Any]) -> np.ndarray:
+        """Nested closed intervals: first of green/yellow/orange containing the value, else red."""
+        v = np.asarray(values, dtype=float)
+        colors = np.full(v.shape, "red", dtype=object)
+        for color in ("orange", "yellow", "green"):  # inner bands overwrite outer ones
+            low, high = bands[color]
+            inside = np.ones(v.shape, dtype=bool)
+            if low is not None:
+                inside &= v >= low
+            if high is not None:
+                inside &= v <= high
+            colors[inside] = color
+        return colors
+
+    @staticmethod
+    def _color_at_most(value: float, limits: Mapping[str, float]) -> str:
+        """Green if value <= green limit, Yellow if <= yellow, Orange if <= orange, else Red."""
+        for color in ("green", "yellow", "orange"):
+            if value <= limits[color]:
                 return color
-        if red_if_below:
-            return "red"
         return "red"
 
+    @staticmethod
+    def _color_at_least(value: float, limits: Mapping[str, float]) -> str:
+        """Green if value >= green limit, Yellow if >= yellow, Orange if >= orange, else Red."""
+        for color in ("green", "yellow", "orange"):
+            if value >= limits[color]:
+                return color
+        return "red"
+
+    @staticmethod
+    def _color_counts(colors: np.ndarray) -> Dict[str, int]:
+        colors = np.asarray(colors)
+        return {c: int((colors == c).sum()) for c in COLORS}
+
     @classmethod
-    def _counts_from_single_value(
-        cls,
-        value: float,
-        thresholds: List[Tuple[str, Optional[float], Optional[float]]],
-        red_if_below: bool = False,
-    ) -> Dict[str, int]:
-        color = cls._color_from_thresholds(value, thresholds, red_if_below)
-        counts = {key: 0 for key in cls.COLOR_ORDER}
-        counts[color] = 1
-        return counts
+    def _worst_rating(cls, counts: Dict[str, int]) -> TAILRating:
+        for color in reversed(COLORS):
+            if counts.get(color, 0) > 0:
+                return cls.COLOR_TO_RATING[color]
+        return TAILRating.EXCELLENT
+
+    @staticmethod
+    def _time_share_rating(counts: Dict[str, int], rule: Mapping[str, Mapping[str, float]]) -> TAILRating:
+        """
+        Time-share label, tail.R l.357-369 read cumulatively: the first of I, II,
+        III whose conditions hold, otherwise IV. tail.R also requires Yellow > 5 %
+        for II and Orange > 5 % for III; dropping those lower bounds only closes
+        the gaps where tail.R falls through to IV (e.g. 99.5 % Green + 0.5 % Red).
+        """
+        total = sum(counts.values())
+        if not total:
+            return TAILRating.POOR
+        share = {c: counts.get(c, 0) / total for c in COLORS}
+        for label in ("I", "II", "III"):
+            cond = rule[label]
+            if (
+                share["green"] >= cond.get("green_min", 0.0)
+                and share["orange"] <= cond.get("orange_max", 1.0)
+                and share["red"] <= cond.get("red_max", 1.0)
+            ):
+                return TAILRating.from_label(label)
+        return TAILRating.POOR
 
     @classmethod
     def _build_parameter_result(
         cls,
         parameter: str,
         category: TAILCategory,
+        rating: TAILRating,
         counts: Dict[str, int],
         sample_count: int,
         summary_value: Optional[float],
         metadata: Dict[str, Any],
+        extension: bool = False,
+        compliance: Optional[float] = None,
     ) -> TAILParameterResult:
         distribution = cls._distribution(counts)
-        dominant_color = cls._worst_color(counts)
-        rating = cls.COLOR_TO_RATING[dominant_color]
         metadata = dict(metadata)
-        metadata["compliance_rate"] = cls._compliance_from_distribution(distribution)
-
+        # hvx's informative "compliance": share Green plus half the share Yellow (not part of TAIL)
+        metadata["compliance_rate"] = round(compliance, 2) if compliance is not None else round(
+            distribution["green"] + 0.5 * distribution["yellow"], 2
+        )
         return TAILParameterResult(
             parameter=parameter,
             category=category,
             rating=rating,
             rating_label=rating.to_label(),
-            dominant_color=dominant_color.title(),
+            dominant_color=rating.to_color(),
             distribution=distribution,
             sample_count=sample_count,
             summary_value=summary_value,
             metadata=metadata,
+            extension=extension,
         )
 
     @classmethod
     def _distribution(cls, counts: Dict[str, int]) -> Dict[str, float]:
         total = sum(counts.values())
         if total == 0:
-            return {color: 0.0 for color in cls.COLOR_ORDER}
-        return {
-            color: round(count / total * 100.0, 2) for color, count in counts.items()
-        }
+            return {color: 0.0 for color in COLORS}
+        return {color: round(counts.get(color, 0) / total * 100.0, 2) for color in COLORS}
 
-    @classmethod
-    def _worst_color(cls, counts: Dict[str, int]) -> str:
-        for color in reversed(cls.COLOR_ORDER):
-            if counts.get(color, 0) > 0:
-                return color
-        return "green"
 
-    @classmethod
-    def _worst_color_from_params(cls, params: List[TAILParameterResult]) -> str:
-        color_counts = {color: 0 for color in cls.COLOR_ORDER}
-        for param in params:
-            for color, pct in param.distribution.items():
-                if pct > 0:
-                    color_counts[color] += 1
-        return cls._worst_color(color_counts).title()
-
-    @classmethod
-    def _compliance_from_distribution(cls, distribution: Dict[str, float]) -> float:
-        return round(distribution.get("green", 0.0) + 0.5 * distribution.get("yellow", 0.0), 2)
-
-    @classmethod
-    def _determine_season(
-        cls, index: pd.Index, season_hint: Optional[str] = None
-    ) -> str:
-        if season_hint in ("heating", "non_heating"):
-            return "heating" if season_hint == "heating" else "non_heating"
-
-        if isinstance(index, pd.DatetimeIndex) and not index.empty:
-            heating_months = {10, 11, 12, 1, 2, 3}
-            heating_count = sum(1 for month in index.month if month in heating_months)
-            return "heating" if heating_count >= len(index) / 2 else "non_heating"
-
-        return "heating"
-
-    @classmethod
-    def _ventilation_requirement(cls, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        area = metadata.get("area_m2") or 0.0
-        occupancy = metadata.get("design_occupancy") or metadata.get("design_occupants")
-        if occupancy is None and area:
-            occupancy = max(1, round(area / 10.0))
-        occupancy = occupancy or 1
-        per_person = cls.VENTILATION_PER_PERSON_LPS
-        total = per_person * occupancy
-        return {
-            "per_person_rate_lps": per_person,
-            "total_lps": total,
-            "assumed_occupancy": occupancy,
-            "area_m2": area,
-        }
+__all__ = [
+    "TAILCalculator",
+    "TAILCategory",
+    "TAILCategoryResult",
+    "TAILOverallResult",
+    "TAILParameterResult",
+    "TAILRating",
+    "load_config",
+    "normalize_type",
+    "r_round",
+]

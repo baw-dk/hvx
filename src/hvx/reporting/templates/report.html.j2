@@ -190,12 +190,12 @@
 <h2>{{ _("TAIL rating") }}</h2>
 <div class="card">
   <figure class="tail-tree-fig">
-    <figcaption><strong>{{ _("Typical room") }}</strong> · {{ report.portfolio_name }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
+    <figcaption><strong>{{ _("Typical room (hvx summary)") }}</strong> · {{ report.portfolio_name }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
     {{ tail_tree(s.tail) }}
   </figure>
   {% set tail_buildings = report.buildings | selectattr("summary.tail") | list %}
   {% if tail_buildings | length > 1 %}
-  <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the typical room. Bars below: how the rooms are spread over I–IV.") }}</p>
+  <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the typical room (hvx summary: rounded mean of the rooms' TAIL ratings, not a TAIL building rating). Bars below: how the rooms are spread over I–IV.") }}</p>
   <div class="scroll">
   <table class="tail-matrix">
     <thead><tr><th>{{ _("Building") }}</th><th class="num">{{ _("Rooms") }}</th><th class="c">{{ _("Overall") }}</th>
@@ -211,7 +211,7 @@
   </table>
   </div>
   {% endif %}
-  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read the tree from left to right: each domain takes its worst parameter and the overall rating its worst domain. For a group of rooms each parameter shows the typical room (rounded mean of the rooms' ratings). Grey, dashed: not measured, so the domain is not rated.") }}</p>
+  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. Read the tree from left to right: each domain takes its worst parameter and the overall rating its worst domain. For a group of rooms the tree shows the typical room, an hvx summary: each parameter is the rounded mean of the rooms' TAIL ratings. It is not a TAIL building rating, which TAIL derives from the pooled data of all rooms. Grey, dashed: not measured, so the domain is not rated.") }}</p>
 </div>
 {% endif %}
 

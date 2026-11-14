@@ -173,6 +173,9 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
             season=season,
             outdoor_temperature=outdoor,
             force_recompute=True,
+            # The frame is already restricted to the occupancy schedule (or 24/7 by
+            # choice): standards must not apply their own opening hours on top.
+            occupancy_filtered=True,
         )
         season_result = SeasonResult(
             season=season,
@@ -204,12 +207,18 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
             report.warnings.append(f"{season}: {reason}")
         tail = results.get("tail")
         if isinstance(tail, dict):
+            # TAIL on this season's slice; temperature bands still follow each sample's month.
             season_result.tail_rating = tail.get("overall_rating_label")
             season_result.tail = {
                 "overall": tail.get("overall_rating_label"),
                 "domains": {k: v.get("rating_label") for k, v in (tail.get("domains") or {}).items() if isinstance(v, dict)},
                 "parameters": {k: v.get("rating") for k, v in (tail.get("parameters") or {}).items() if isinstance(v, dict)},
             }
+            extensions = {k: v.get("rating") for k, v in (tail.get("extensions") or {}).items() if isinstance(v, dict)}
+            if extensions:  # hvx extensions (PM10, VOC): shown, never part of a TAIL domain
+                season_result.tail["extensions"] = extensions
+            if tail.get("not_rated"):
+                season_result.tail["not_rated"] = dict(tail["not_rated"])
         report.seasons.append(season_result)
 
     _combine(report, assessments, config, df)
@@ -430,16 +439,29 @@ def _worst_label(labels) -> Optional[str]:
 
 
 def combine_tail(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Worst TAIL label per parameter, domain and overall across several assessments (seasons)."""
+    """
+    Worst TAIL label per parameter, domain and overall across several assessments (seasons).
+    hvx extensions (PM10, VOC) are combined the same way but kept apart from the domains.
+    """
     if not parts:
         return {}
-    params = sorted({k for p in parts for k in (p.get("parameters") or {})})
-    domains = sorted({k for p in parts for k in (p.get("domains") or {})})
-    return {
+
+    def worst_of(key: str) -> Dict[str, Optional[str]]:
+        names = sorted({k for p in parts for k in (p.get(key) or {})})
+        return {k: _worst_label((p.get(key) or {}).get(k) for p in parts) for k in names}
+
+    combined: Dict[str, Any] = {
         "overall": _worst_label(p.get("overall") for p in parts),
-        "domains": {d: _worst_label((p.get("domains") or {}).get(d) for p in parts) for d in domains},
-        "parameters": {k: _worst_label((p.get("parameters") or {}).get(k) for p in parts) for k in params},
+        "domains": worst_of("domains"),
+        "parameters": worst_of("parameters"),
     }
+    extensions = worst_of("extensions")
+    if extensions:
+        combined["extensions"] = extensions
+    not_rated = {k: v for p in parts for k, v in (p.get("not_rated") or {}).items() if k not in combined["parameters"]}
+    if not_rated:
+        combined["not_rated"] = not_rated
+    return combined
 
 
 def _profiles(report: RoomReport, df: pd.DataFrame, hours: pd.Series, config: ReportConfig) -> None:

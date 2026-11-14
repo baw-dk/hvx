@@ -16,6 +16,16 @@ tracer-gas decay literature, with synthetic data of known answer and real school
   Category IV is everything outside III (no invented IV limits, no "below IV"); relative
   humidity counts only for humidity-controlled rooms; running-mean weighting; timestamps
   with a UTC offset are read in local time.
+- **TAIL** now follows the authors' reference script (tail.R, Wargocki et al. 2021): temperature and
+  RH are rated by time shares instead of the worst sample (tail.R's share rule read cumulatively
+  to close its gaps), temperature bands are chosen per sample by month (heating October–May), and
+  RH, CO₂ (P95, outdoor 420 ppm configurable), PM2.5, formaldehyde, benzene, radon, noise (P5 by
+  room type), illuminance, daylight factor, ventilation (from persons and floor area; not rated
+  without them) and mould use the script's thresholds, now kept in `standards/tail/config.yaml`.
+  PM10 and VOC are reported as hvx extensions outside the TAIL rating. Reports no longer apply
+  opening hours a second time inside TAIL, timezone-aware timestamps are rated in local time
+  instead of UTC, and the group "typical room" is labelled as an hvx summary, not a TAIL
+  building rating.
 - **BR18**: checked once over all occupied hours (each season had its own 100 h allowance);
   hours from sample durations; § 447 and the 26/27 °C hours are labelled as indicators.
 - **After-hours air change** from CO₂ decay: log-linear fit with a per-room background,
@@ -66,13 +76,9 @@ tracer-gas decay literature, with synthetic data of known answer and real school
 - **License: MPL-2.0** (previously GPL-3.0 in `LICENSE`, "Proprietary" in package metadata).
 - Imports move to the `hvx` namespace (`from hvx.core ...`).
 
-### Fixed
+### Fixed (earlier in this release)
 - CI: hassfest rejected uppercase selector option keys; the HACS job is skipped for private
   repositories; the MQTT test broker failed on Python 3.10; actions updated to Node 24 versions.
-- Rooms below EN 16798 Category IV in a season were shown as Category IV or left out of
-  "rooms needing attention"; they now rank first and count against building categories.
-- "Increase ventilation" was recommended for every room with a low after-hours CO₂ decay
-  rate; it now follows measured CO₂ during use.
 - Overheating and scenario analyses used all hours (including empty holidays).
 - Public holidays were never excluded (`holidays` calendar created without years).
 - Home Assistant integration defaults to "residential" (24/7) instead of "office".

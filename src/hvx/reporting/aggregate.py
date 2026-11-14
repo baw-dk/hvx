@@ -84,20 +84,27 @@ def summarize(rooms: Sequence[RoomReport], config: ReportConfig) -> GroupSummary
 TAIL_DOMAIN_OF = {
     "temperature": "thermal", "noise": "acoustic", "illuminance": "luminous", "lux": "luminous", "daylight_factor": "luminous",
 }
+# hvx extensions: rated alongside TAIL but not TAIL parameters, so never part of a domain
+TAIL_EXTENSIONS = frozenset({"pm10", "voc", "tvoc"})
 
 
 def typical_tail(rooms: Sequence[Dict]) -> Dict:
     """
-    TAIL for a group of rooms: each parameter gets the rounded mean of the rooms'
-    ratings (the typical room); domains and overall then follow the TAIL rule
-    (worst parameter, worst domain). Using the worst room instead would make
-    almost every building IV and hide where most rooms stand.
+    hvx summary of the TAIL ratings of a group of rooms, *not* a TAIL building
+    rating: the "typical room" gets, per parameter, the rounded mean of the
+    rooms' TAIL ratings; its domains and overall then follow the TAIL rule
+    (worst parameter, worst domain). TAIL itself rates a building by pooling
+    the data of all monitored rooms into one distribution (tail.R); using the
+    worst room instead would make almost every building IV and hide where most
+    rooms stand. ``distribution`` counts how the rooms themselves are rated.
     """
     if not rooms:
         return {}
     values: Dict[str, List[int]] = {}
     for tail in rooms:
         for p, label in (tail.get("parameters") or {}).items():
+            if p in TAIL_EXTENSIONS:
+                continue
             if label in CATEGORIES:
                 values.setdefault(p, []).append(CATEGORIES.index(label) + 1)
     params = {p: CATEGORIES[min(3, max(0, int(sum(v) / len(v) + 0.5) - 1))] for p, v in values.items()}
@@ -114,7 +121,8 @@ def typical_tail(rooms: Sequence[Dict]) -> Dict:
             if label in CATEGORIES:
                 counts = distribution.setdefault(key, {})
                 counts[label] = counts.get(label, 0) + 1
-    return {"overall": overall, "domains": domains, "parameters": params, "rooms": len(rooms), "distribution": distribution}
+    return {"overall": overall, "domains": domains, "parameters": params, "rooms": len(rooms), "distribution": distribution,
+            "basis": "typical room: rounded mean of the rooms' TAIL ratings (hvx summary)"}
 
 
 def worst_rooms(rooms: Iterable[RoomReport], limit: int) -> List[str]:

@@ -301,13 +301,30 @@ Complete implementation of EN 16798-1 indoor environmental input parameters:
 
 ### 2. TAIL Standard Module (`src/hvx/standards/tail/calculator.py`)
 
-TAIL rating scheme for comprehensive indoor environmental quality:
+TAIL rating (Wargocki et al. 2021, doi:10.1016/j.enbuild.2021.111029), following the
+authors' reference script `tail.R` ([TAILRatingScheme](https://github.com/asitkm76/TAILRatingScheme),
+commit c71b8b5). All thresholds live in `src/hvx/standards/tail/config.yaml`, with the
+script's line numbers.
 
-- **Four categories**: Thermal, Acoustic, Indoor Air Quality (IAQ), Luminous
-- **Rating scale**: I (Excellent ≥95%), II (Good 70-95%), III (Fair 50-70%), IV (Poor <50%)
-- **Parameter classification**: Automatic categorization of parameters
-- **Time series analysis**: Compliance over time
-- **Aggregation**: Portfolio-level aggregation with "worst" or "average" methods
+- **Labels I–IV** (Green, Yellow, Orange, Red) per parameter; a domain (Thermal, Acoustic,
+  Indoor air, Luminous) takes its worst parameter and the overall rating its worst domain.
+  Unmeasured parameters stay out.
+- **Temperature** (Thermal) and **relative humidity** (Indoor air): each occupied sample is
+  coloured, the label follows from the time shares. Temperature bands depend on each sample's
+  month (heating season October–May: Green 21–23 °C; June–September: Green 23.5–25.5 °C).
+  tail.R's share rule has gaps (e.g. 99.5 % Green + 0.5 % Red rates IV); hvx reads it
+  cumulatively: I if Green ≥ 94 %, Orange ≤ 1 % and Red = 0; otherwise II if Orange ≤ 5 % and
+  Red ≤ 1 %; otherwise III if Red ≤ 5 %; otherwise IV. Shares count samples with a value.
+- **CO₂**: 95th percentile, Green ≤ outdoor + 550 ppm (970 ppm with the default 420 ppm outdoor).
+- **PM2.5, formaldehyde, benzene, radon**: any Red sample IV, any Yellow II, else I.
+- **Noise**: 5th percentile by room type (small office, open office, hotel room); **illuminance**:
+  share of time within 300–500 lx (offices) or ≥ 100 lx (hotels); **daylight factor**,
+  **ventilation** (from persons and floor area) and **mould** (visible area): worst value.
+- **PM10 and VOC** are not TAIL parameters: rated as hvx extensions, outside the domains.
+- In reports TAIL runs per room on the occupied hours the report selected (no second
+  opening-hours filter). TAIL itself rates a building from the pooled data of all its rooms;
+  the report's building figure is an hvx summary instead: the *typical room*, each parameter
+  the rounded mean of the rooms' TAIL ratings.
 
 ### 3. Ventilation Simulation Model (`src/hvx/simulations/models/ventilation/model.py`)
 
@@ -382,7 +399,8 @@ The helper returns all models that can run directly on the entity or via child r
 ## 📚 References
 
 - EN 16798-1: Energy performance of buildings - Indoor environmental input parameters
-- TAIL Rating Scheme: ALDREN project
+- TAIL rating scheme: Wargocki et al. (2021), Energy & Buildings 244, 111029; reference script
+  https://github.com/asitkm76/TAILRatingScheme
 - pythermalcomfort: https://github.com/CenterForTheBuiltEnvironment/pythermalcomfort
 
 ## 🤝 Contributing

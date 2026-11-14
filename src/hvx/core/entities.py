@@ -1992,6 +1992,7 @@ class Room(SpatialEntity):
         outdoor_temperature: Optional[List[float]] = None,
         force_recompute: bool = False,
         entity_lookup: Optional[Callable[[str], Any]] = None,
+        occupancy_filtered: bool = False,
     ) -> Dict[str, Any]:
         """
         Compute all applicable standards for this room based on configuration.
@@ -2015,6 +2016,9 @@ class Room(SpatialEntity):
             outdoor_temperature: Outdoor temperature data. If None, tries to get from hierarchy.
             force_recompute: If True, recompute even if cached
             entity_lookup: Function to retrieve any entity by ID for hierarchy traversal
+            occupancy_filtered: True when the timeseries are already restricted to
+                occupied hours (the report pipeline does this): standards must not
+                apply their own opening-hours filter on top (TAIL otherwise does).
         
         Returns:
             Dictionary with results from all applicable standards
@@ -2032,9 +2036,10 @@ class Room(SpatialEntity):
         # Cache per season: a single cache slot made a second call with a
         # different season silently return the first season's results.
         season_cache = self.computed_metrics.setdefault('standards_results_by_season', {})
-        if not force_recompute and season in season_cache:
-            self.computed_metrics['standards_results'] = season_cache[season]
-            return season_cache[season]
+        cache_key = f"{season}:occupied" if occupancy_filtered else season
+        if not force_recompute and cache_key in season_cache:
+            self.computed_metrics['standards_results'] = season_cache[cache_key]
+            return season_cache[cache_key]
 
         # Persist inferred building type for downstream standards (TAIL uses it for schedules)
         if building_type and not self.building_type:
@@ -2044,7 +2049,7 @@ class Room(SpatialEntity):
         
         if not self.has_data:
             self.computed_metrics['standards_results'] = results
-            season_cache[season] = results
+            season_cache[cache_key] = results
             return results
         
         # Get the registry
@@ -2092,6 +2097,7 @@ class Room(SpatialEntity):
                     timestamps=self.timestamps,
                     season=season,
                     outdoor_temperature=outdoor_temperature,
+                    occupancy_filtered=occupancy_filtered,
                 )
                 
                 # Store results
@@ -2121,7 +2127,7 @@ class Room(SpatialEntity):
         
         # Cache results
         self.computed_metrics['standards_results'] = results
-        season_cache[season] = results
+        season_cache[cache_key] = results
         return results
 
     def compute_simulations(
