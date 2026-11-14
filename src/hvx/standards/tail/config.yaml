@@ -247,6 +247,71 @@ parameters:
 # the room type is unknown).
 hotel_building_types: [hotel, hospitality]
 
+# ---------------------------------------------------------------------------
+# Building-type profiles. Offices and hotels follow the TAIL paper (Wargocki et
+# al. 2021, Tables 2-5) and tail.R; schools follow the TAIL rating scheme for
+# schools (M.-T. Tran, "Construction of an aggregate indicator of indoor
+# environmental quality in schools", PhD thesis, IMT Atlantique, 2024, ch. III.3,
+# Tables 6-9, 11). A profile's `parameters` are deep-merged over `parameters`.
+# `hours` are the assessed (occupied) hours used when the caller does not filter:
+# offices 09-17 and hotels 22-06 as in predicTAIL (Wei et al. 2022), schools
+# 08-17 (thesis III.3).
+profiles:
+  office:
+    building_types: [office, commercial]
+    hours: {start: "09:00", end: "17:00", weekdays: [0, 1, 2, 3, 4]}
+    aggregation: parameter_mean    # TAIL paper Eq. 1: mean of the rooms' parameter ratings
+  hotel:
+    building_types: [hotel, hospitality]
+    hours: {start: "22:00", end: "06:00", weekdays: [0, 1, 2, 3, 4, 5, 6]}  # sleeping hours
+    aggregation: parameter_mean
+  school:
+    building_types: [school, education, classroom, kindergarten]
+    hours: {start: "08:00", end: "17:00", weekdays: [0, 1, 2, 3, 4]}
+    aggregation: domain_mean       # thesis Fig. 10: classroom TAIL, then mean of classroom domain ratings
+    default_room_type: classroom
+    parameters:
+      co2:                         # Table 8 + Fig. 8: >= 94 % of the time within the category
+        rule: time_share
+      pm25:                        # Table 8 (WHO 2021): I < 5, II >= 5, IV >= 15 ug/m3
+        limits: {green_below: 5, yellow_below: 15}
+      no2:                         # Table 8 (WHO 2021 / ANSES): I < 10, II < 20, IV >= 20 ug/m3
+        domain: iaq
+        unit: "µg/m³"
+        rule: worst_sample
+        limits: {green_below: 10, yellow_below: 20}
+      noise:                       # Table 7 (EN 16798-1): classrooms <= 30 / 34 / 38 dB(A), P5 when occupied
+        limits:
+          classroom: {green: 30, yellow: 34, orange: 38}
+        room_types:
+          classroom: [classroom, class_room, teaching_room, klasselokale, undervisningsrum, klasseværelse]
+      reverberation_time:          # Table 7 (French order of 25 April 2003, Danish BR10); III has no criteria
+        domain: acoustic
+        unit: "s"
+        rule: spot
+        small_room_volume_m3: 250
+        small: {green: [0.4, 0.6], yellow: [0.6, 0.8]}
+        large: {green: [0.6, 0.8], yellow: [0.8, 1.2]}
+      illuminance:                 # Table 9 (EN 12464-1): total illuminance >= 500 / 300 / 200 lx
+        rule: time_share_min_lux   # thesis rates spot measurements; for continuous logs hvx applies
+        min_lux: {green: 500, yellow: 300, orange: 200}  # the time-share rule (>= 94 % of school hours)
+
+# Adaptive temperature limits for buildings WITHOUT mechanical cooling in the
+# non-heating season (TAIL paper Table 2, thesis Table 6): around
+# 0.33 * theta_rm + 18.8 °C, Green -3/+2, Yellow -4/+3, Orange -5/+4 K. theta_rm is
+# the running mean of daily outdoor temperature (alpha 0.8). Used when the
+# building has mechanical_cooling: false and outdoor temperature is available.
+# Validity (EN 16798-1 B.2.2): upper limits for theta_rm 10-30 °C, lower for
+# 15-30 °C; hvx holds each limit at the end of its range outside it, and uses the
+# fixed bands above 30 °C.
+adaptive_temperature:
+  offsets:
+    green: [-3.0, 2.0]
+    yellow: [-4.0, 3.0]
+    orange: [-5.0, 4.0]
+  upper_valid: [10.0, 30.0]
+  lower_valid: [15.0, 30.0]
+
 # Not TAIL parameters: rated with hvx's own limits and reported as extensions,
 # never part of the Indoor Air domain or the overall rating.
 extensions:
@@ -258,10 +323,15 @@ extensions:
     unit: "µg/m³"
     rule: worst_sample
     bands: {green: [null, 300.0], yellow: [null, 600.0], orange: [null, 1000.0]}
+  no2:  # TAIL parameter only in the school profile; an extension elsewhere (same WHO-based limits)
+    unit: "µg/m³"
+    rule: worst_sample
+    bands: {green: [null, 9.999], yellow: [null, 19.999], orange: [null, 19.999]}  # no Orange level
 
 # hvx entity-hierarchy roll-up of room results (Room -> Floor -> Building ->
-# Portfolio). Not part of TAIL: TAIL rates a building by pooling the data of
-# all monitored rooms into one distribution (tail.R l.22-66).
+# Portfolio). Reports use the profile's `aggregation` instead (TAIL paper Eq. 1
+# for offices and hotels, thesis Fig. 10 for schools); tail.R itself pools the
+# data of all monitored rooms (l.22-66).
 aggregation:
   # Options: "worst", "best", "average", "weighted_average"
   spatial_method: "worst"

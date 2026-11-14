@@ -144,6 +144,10 @@ def run(
         'season_hint': kwargs.get('season'),
         'timezone': tz_name,
         'outdoor_co2_ppm': outdoor_co2,
+        'volume_m3': getattr(spatial_entity, 'volume_m3', None),
+        # adaptive temperature bands (TAIL Table 2) for buildings without mechanical cooling
+        'mechanical_cooling': entity_meta.get('mechanical_cooling'),
+        'outdoor_daily_mean_temperature': entity_meta.get('outdoor_daily_mean_temperature'),
     }
 
     tail_result = TAILCalculator.assess_timeseries(
@@ -215,6 +219,7 @@ def run(
     summary_results = {
         'overall_rating': overall.value if overall is not None else None,
         'overall_rating_label': tail_result.overall_rating_label,
+        'profile': tail_result.profile,
         'overall_compliance_rate': tail_result.overall_compliance_rate,
         'rating_color': rating_info.get('color', 'unknown'),
         'rating_description': rating_info.get('description', ''),

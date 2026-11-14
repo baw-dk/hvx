@@ -146,8 +146,17 @@ class OccupancySchedule:
             return pd.Series(True, index=index)
         minutes = index.hour * 60 + index.minute
         start, end = (_minutes(self.start), _minutes(self.end))
-        occupied = (minutes >= start) & (minutes < end) & index.day_of_week.isin(self.weekdays)
-        days = index.normalize()
+        if start <= end:
+            occupied = (minutes >= start) & (minutes < end) & index.day_of_week.isin(self.weekdays)
+            days = index.normalize()
+        else:
+            # Overnight period (e.g. hotel sleeping hours 22:00-06:00): the morning part belongs to
+            # the night that started the previous evening, so weekdays and holidays refer to that day.
+            evening = minutes >= start
+            morning = minutes < end
+            night_of = index.normalize() - pd.to_timedelta(morning.astype(int), unit="D")
+            occupied = (evening | morning) & pd.DatetimeIndex(night_of).day_of_week.isin(self.weekdays)
+            days = pd.DatetimeIndex(night_of)
         if self.public_holidays and country and len(index):
             import holidays as holidays_lib
 

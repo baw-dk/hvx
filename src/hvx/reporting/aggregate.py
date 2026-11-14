@@ -82,37 +82,64 @@ def summarize(rooms: Sequence[RoomReport], config: ReportConfig) -> GroupSummary
 
 
 TAIL_DOMAIN_OF = {
-    "temperature": "thermal", "noise": "acoustic", "illuminance": "luminous", "lux": "luminous", "daylight_factor": "luminous",
+    "temperature": "thermal", "noise": "acoustic", "reverberation_time": "acoustic",
+    "illuminance": "luminous", "lux": "luminous", "daylight_factor": "luminous",
 }
 # hvx extensions: rated alongside TAIL but not TAIL parameters, so never part of a domain
 TAIL_EXTENSIONS = frozenset({"pm10", "voc", "tvoc"})
 
 
+def interim_label(ranks: Sequence[int]) -> str:
+    """TAIL paper Eq. 1: mean rank of the rooms (I = 1 ... IV = 4), one decimal; 1-1.4 I,
+    1.5-2.4 II, 2.5-3.4 III, 3.5-4 IV."""
+    from decimal import ROUND_HALF_UP, Decimal
+
+    mean = Decimal(sum(ranks)) / Decimal(len(ranks))
+    value = float(mean.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+    return "I" if value <= 1.4 else "II" if value <= 2.4 else "III" if value <= 3.4 else "IV"
+
+
 def typical_tail(rooms: Sequence[Dict]) -> Dict:
     """
-    hvx summary of the TAIL ratings of a group of rooms, *not* a TAIL building
-    rating: the "typical room" gets, per parameter, the rounded mean of the
-    rooms' TAIL ratings; its domains and overall then follow the TAIL rule
-    (worst parameter, worst domain). TAIL itself rates a building by pooling
-    the data of all monitored rooms into one distribution (tail.R); using the
-    worst room instead would make almost every building IV and hide where most
-    rooms stand. ``distribution`` counts how the rooms themselves are rated.
+    TAIL rating of a group of rooms (a building, or a portfolio), by profile:
+
+    * offices and hotels, TAIL paper (Wargocki et al. 2021) Eq. 1: per parameter the
+      interim rating (mean of the rooms' ratings, binned); domain = worst parameter;
+      overall = worst domain.
+    * schools, TAIL for schools (Tran 2024, Fig. 10): each classroom is rated fully; per
+      domain the mean of the classrooms' domain ratings (binned the same way); overall =
+      worst domain. Parameter values shown are the interim ratings, for information.
+
+    ``distribution`` counts how the rooms themselves are rated.
     """
     if not rooms:
         return {}
-    values: Dict[str, List[int]] = {}
-    for tail in rooms:
-        for p, label in (tail.get("parameters") or {}).items():
-            if p in TAIL_EXTENSIONS:
-                continue
-            if label in CATEGORIES:
-                values.setdefault(p, []).append(CATEGORIES.index(label) + 1)
-    params = {p: CATEGORIES[min(3, max(0, int(sum(v) / len(v) + 0.5) - 1))] for p, v in values.items()}
-    domains: Dict[str, str] = {}
-    for p, label in params.items():
-        d = TAIL_DOMAIN_OF.get(p, "iaq")
-        if d not in domains or CATEGORIES.index(label) > CATEGORIES.index(domains[d]):
-            domains[d] = label
+    profiles = [t.get("profile") for t in rooms if t.get("profile")]
+    profile = max(set(profiles), key=profiles.count) if profiles else "office"
+    if len(set(profiles)) > 1:
+        profile = "mixed"
+
+    def collect(key: str) -> Dict[str, List[int]]:
+        values: Dict[str, List[int]] = {}
+        for tail in rooms:
+            for name, label in (tail.get(key) or {}).items():
+                if name in TAIL_EXTENSIONS:
+                    continue
+                if label in CATEGORIES:
+                    values.setdefault(name, []).append(CATEGORIES.index(label) + 1)
+        return values
+
+    params = {p: interim_label(v) for p, v in collect("parameters").items()}
+    if profile == "school":
+        domains = {d: interim_label(v) for d, v in collect("domains").items()}
+        basis = "TAIL for schools (Tran 2024): mean of the classrooms' domain ratings"
+    else:
+        domains = {}
+        for p, label in params.items():
+            d = TAIL_DOMAIN_OF.get(p, "iaq")
+            if d not in domains or CATEGORIES.index(label) > CATEGORIES.index(domains[d]):
+                domains[d] = label
+        basis = "TAIL (Wargocki et al. 2021, Eq. 1): mean of the rooms' parameter ratings"
     overall = max(domains.values(), key=CATEGORIES.index) if domains else None
     # How the rooms themselves are rated, per domain and overall: {"thermal": {"I": 3, "IV": 9}, ...}
     distribution: Dict[str, Dict[str, int]] = {}
@@ -121,8 +148,8 @@ def typical_tail(rooms: Sequence[Dict]) -> Dict:
             if label in CATEGORIES:
                 counts = distribution.setdefault(key, {})
                 counts[label] = counts.get(label, 0) + 1
-    return {"overall": overall, "domains": domains, "parameters": params, "rooms": len(rooms), "distribution": distribution,
-            "basis": "typical room: rounded mean of the rooms' TAIL ratings (hvx summary)"}
+    return {"overall": overall, "domains": domains, "parameters": params, "rooms": len(rooms),
+            "distribution": distribution, "profile": profile, "basis": basis}
 
 
 def worst_rooms(rooms: Iterable[RoomReport], limit: int) -> List[str]:

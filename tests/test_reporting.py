@@ -442,7 +442,7 @@ def test_tail_tree():
 
 def test_tail_section_in_report(portfolio):
     html = render(ReportBuilder(ReportConfig(language="da", **FAST)).build(*portfolio), "html")
-    assert 'class="chart tail"' in html and "Typisk lokale" in html and 'class="tail-badge"' in html
+    assert 'class="chart tail"' in html and "Vurderet ud fra lokalerne (TAIL)" in html and 'class="tail-badge"' in html
     assert "tail-tree" not in html
 
 

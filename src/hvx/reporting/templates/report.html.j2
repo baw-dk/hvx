@@ -199,17 +199,17 @@
 <div class="card">
   {% if report.buildings | selectattr("summary.tail") | list | length > 1 %}
   <figure class="tail-net-fig">
-    <figcaption><strong>{{ report.portfolio_name }}</strong> · {{ _("Typical room (hvx summary)") }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
+    <figcaption><strong>{{ report.portfolio_name }}</strong> · {{ _("Rated from its rooms (TAIL)") }} · {{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption>
     {{ tail_network(s.tail, report.buildings | selectattr("summary.tail") | list, title=report.portfolio_name) }}
   </figure>
   {% else %}
   <div class="tail-row">
-    <figure class="tail-main">{{ tail_chart(s.tail, 280) }}<figcaption><strong>{{ report.portfolio_name }}</strong><br>{{ _("Typical room (hvx summary)") }}<br>{{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption></figure>
+    <figure class="tail-main">{{ tail_chart(s.tail, 280) }}<figcaption><strong>{{ report.portfolio_name }}</strong><br>{{ _("Rated from its rooms (TAIL)") }}<br>{{ _("{n} rooms", n=s.tail.get("rooms", 0)) }}</figcaption></figure>
   </div>
   {% endif %}
   {% set tail_buildings = report.buildings | selectattr("summary.tail") | list %}
   {% if tail_buildings | length > 1 %}
-  <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the typical room (hvx summary: rounded mean of the rooms' TAIL ratings, not a TAIL building rating). Bars below: how the rooms are spread over I–IV.") }}</p>
+  <p class="muted small" style="margin:14px 0 0">{{ _("Badges: the rating from the rooms (offices and hotels: mean of the rooms' parameter ratings; schools: mean of the classrooms' domain ratings). Bars below: how the rooms are spread over I–IV.") }}</p>
   <div class="scroll">
   <table class="tail-matrix">
     <thead><tr><th>{{ _("Building") }}</th><th class="num">{{ _("Rooms") }}</th><th class="c">{{ _("Overall") }}</th>
@@ -225,7 +225,7 @@
   </table>
   </div>
   {% endif %}
-  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. The network shows each building with its four domain ratings (T, A, I, L). On each building's page, read the circle from the outside in: the outer ring shows the measured parameters, the middle ring the four domains (each takes its worst parameter) and the centre the overall rating (the worst domain). For a group of rooms the circle shows the typical room, an hvx summary: each parameter is the rounded mean of the rooms' TAIL ratings. It is not a TAIL building rating, which TAIL derives from the pooled data of all rooms. Grey: not measured (hover for the parameters), so the domain is not rated.") }}</p>
+  <p class="muted small" style="margin-top:12px">{{ _("TAIL rates Thermal, Acoustic, Indoor air and Luminous conditions from I (best) to IV. The network shows each building with its four domain ratings (T, A, I, L). On each building's page, read the circle from the outside in: the outer ring shows the measured parameters, the middle ring the four domains (each takes its worst parameter) and the centre the overall rating (the worst domain). A building is rated from its rooms as the TAIL sources prescribe: offices and hotels by the mean of the rooms' parameter ratings (Wargocki et al. 2021), schools by the mean of the classrooms' domain ratings (TAIL for schools, Tran 2024). Grey: not measured (hover for the parameters), so the domain is not rated.") }}</p>
 </div>
 {% endif %}
 
@@ -302,7 +302,7 @@
   <h2>{{ b.building_name }}</h2>
   <div class="card">
     <div class="bp-grid">
-      {% if b.summary.tail %}<figure class="tail-main" style="margin:0;text-align:center">{{ tail_chart(b.summary.tail, 260) }}<figcaption class="muted small">TAIL · {{ _("Typical room (hvx summary)") }}</figcaption></figure>{% else %}<div></div>{% endif %}
+      {% if b.summary.tail %}<figure class="tail-main" style="margin:0;text-align:center">{{ tail_chart(b.summary.tail, 260) }}<figcaption class="muted small">TAIL · {{ _("Rated from its rooms (TAIL)") }}</figcaption></figure>{% else %}<div></div>{% endif %}
       <div>
         <div class="bp-stats">
           <div class="card kpi"><div class="value">{{ b.summary.rooms_analysed }}</div><div class="label">{{ _("Rooms") }}</div></div>
