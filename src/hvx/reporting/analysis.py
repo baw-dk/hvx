@@ -207,17 +207,10 @@ def _analyze(task: RoomTask, config: ReportConfig, report: RoomReport) -> None:
                 "domains": {k: v.get("rating_label") for k, v in (tail.get("domains") or {}).items() if isinstance(v, dict)},
                 "parameters": {k: v.get("rating") for k, v in (tail.get("parameters") or {}).items() if isinstance(v, dict)},
             }
-        br18 = results.get("br18")
-        if isinstance(br18, dict) and br18.get("overall_pass") is not None:
-            season_result.br18_pass = bool(br18["overall_pass"])
-            season_result.br18_failed = [
-                str(rule.get("name") or rule_id)
-                for rule_id, rule in (br18.get("rules") or {}).items()
-                if isinstance(rule, dict) and rule.get("passed") is False
-            ]
         report.seasons.append(season_result)
 
     _combine(report, assessments, config, df)
+    _br18(report, df, room, country, building_type)
 
     # --- simulations on the full period -------------------------------------
     if config.include_simulations:
@@ -285,9 +278,6 @@ def _combine(report: RoomReport, assessments: List[IEQAssessment], config: Repor
     tail_worst = ComfortCategory.worst(*tails)
     report.tail_rating = tail_worst.value if tail_worst else None
     report.tail = combine_tail([s.tail for s in report.seasons if s.tail])
-    passes = [s.br18_pass for s in report.seasons if s.br18_pass is not None]
-    report.br18_pass = all(passes) if passes else None
-    report.br18_failed = sorted({name for s in report.seasons for name in s.br18_failed})
 
 
 def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Room, config: ReportConfig) -> None:
@@ -339,13 +329,42 @@ def _simulate(report: RoomReport, full: pd.DataFrame, df: pd.DataFrame, room: Ro
             report.warnings.append(f"Recommendations failed: {exc}")
 
 
+def _br18(report: RoomReport, df: pd.DataFrame, room: Room, country: str, building_type: str) -> None:
+    """BR18 once over all assessed (occupied) hours of the period: its hour limits are per
+    year of use, so splitting by season would give each season its own allowance."""
+    from hvx.standards.br18.analysis import load_config as br18_config, run as br18_run
+
+    applicability = br18_config().get("applicability") or {}
+    if str(country).upper() not in (applicability.get("countries") or []):
+        return
+    if building_type not in (applicability.get("building_types") or [building_type]):
+        return
+    series, stamps = frame_to_timeseries(df[[c for c in ("temperature", "co2") if c in df.columns]])
+    if not series:
+        return
+    work = room.model_copy(update={"timeseries_data": series, "timestamps": stamps, "computed_metrics": {},
+                                   "building_type": room.building_type or building_type})
+    try:
+        result = br18_run(work, series, stamps, season="all_year").summary_results
+    except Exception as exc:  # BR18 is an add-on: never fail the room for it
+        report.warnings.append(f"BR18 check failed: {exc}")
+        return
+    if result.get("overall_pass") is None:
+        return
+    report.br18_pass = bool(result["overall_pass"])
+    report.br18_failed = sorted(
+        str(rule.get("name") or rule_id)
+        for rule_id, rule in (result.get("rules") or {}).items()
+        if isinstance(rule, dict) and rule.get("passed") is False
+    )
+
+
 def _sample_hours(df: pd.DataFrame) -> pd.Series:
-    """Hours each sample stands for (gap to the next one, capped so data gaps don't count)."""
-    if not isinstance(df.index, pd.DatetimeIndex) or len(df) < 2:
-        return pd.Series(1.0, index=df.index)
-    gaps = df.index.to_series().diff().shift(-1).dt.total_seconds() / 3600.0
-    typical = float(gaps.median()) if gaps.notna().any() else 1.0
-    return gaps.fillna(typical).clip(lower=0, upper=max(typical, 1e-9) * 3)
+    """Hours each sample stands for: the gap to the next one, capped at max(3x the median
+    step, 1 h) so data gaps don't count but an hourly sample always counts as its hour."""
+    from hvx.standards.br18.analysis import _sample_hours as sample_hours
+
+    return sample_hours(df.index)
 
 
 def _exceedance(report: RoomReport, df: pd.DataFrame, hours: pd.Series, config: ReportConfig) -> None:
@@ -430,7 +449,7 @@ def _issues(report: RoomReport, config: ReportConfig) -> List[str]:
     if report.achieved_category and report.meets_target is False:
         issues.append(t("Achieves Category {cat}; target is Category {target}.", cat=report.achieved_category, target=target))
     if report.br18_failed:
-        issues.append(t("BR18 not met: {rules}.", rules="; ".join(t(name) for name in report.br18_failed)))
+        issues.append(t("BR18 indicators not met: {rules}.", rules="; ".join(t(name) for name in report.br18_failed)))
     for name, summary in report.parameters.items():
         if summary.compliance_pct is None or summary.compliance_pct >= config.issue_threshold_pct:
             continue
@@ -455,9 +474,9 @@ def _issues(report: RoomReport, config: ReportConfig) -> List[str]:
         if parameter == "co2" and (not occupied or hours / occupied >= 0.05):
             issues.append(t("CO₂ above {limit} ppm for {hours} h{share}.", limit=limit, hours=t.num(hours, 0), share=share))
         elif parameter == "temperature" and float(limit) == 26 and hours > 100:
-            issues.append(t("Above 26 °C for {hours} h in use (BR18 allows 100 h).", hours=t.num(hours, 0)))
+            issues.append(t("Above 26 °C for {hours} h in use (BR18 guidance value: 100 h).", hours=t.num(hours, 0)))
         elif parameter == "temperature" and float(limit) == 27 and hours > 25:
-            issues.append(t("Above 27 °C for {hours} h in use (BR18 allows 25 h).", hours=t.num(hours, 0)))
+            issues.append(t("Above 27 °C for {hours} h in use (BR18 guidance value: 25 h).", hours=t.num(hours, 0)))
     return issues
 
 

@@ -24,34 +24,44 @@ required_inputs:
 allow_partial_analysis: false
 
 # BR18 Indoor Climate Rules
+# How hvx applies these rules to MEASURED data:
+# - The 100 h > 26 °C / 25 h > 27 °C values come from the BR18 guidance on thermal indoor
+#   climate (Bygningsreglementets vejledning om termisk indeklima, to § 385), where they
+#   normally satisfy the requirement for offices and are documented by calculation for a
+#   reference year. For other non-residential buildings (e.g. schools) the building owner
+#   sets the hours. hvx applies them to measured occupied hours of a whole year, once
+#   (not per season), as an indicator.
+# - § 447 (1000 ppm CO2 in teaching rooms and day-care) is a design requirement ("for de
+#   dimensionerende forhold"). hvx reports measured hours above 1000 ppm against it with no
+#   allowance, as an indicator ("assessment: indicative").
 rules:
   # Thermal comfort (BR18 Termisk indeklima vejledning kap. 1.0)
   - id: "br18_nonres_temp_26"
-    name: "Non-residential operative temperature ≤26°C"
+    name: "Above 26 °C at most 100 h per year (BR18 guidance value)"
     metric: "temperature"
     operator: "<="
     target_value: 26.0
     unit: "°C"
     tolerance_hours: 100
     applies_during: "occupied"
-    season: "summer"
+    season: "all_year"  # hours per year of use
     applicable_building_types: ["office", "school", "classroom", "meeting_room", "daycare", "industrial", "retail"]
     source_section: "BR18 vejledning kap. 1.0"
-    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    source_url: "https://www.bygningsreglementet.dk/media/n5hjvonl/termisk-indeklima.pdf"
     description: "Andre bygninger end boliger skal dokumentere, at operative temperaturer over 26 °C kun forekommer op til 100 brugstimer årligt."
 
   - id: "br18_nonres_temp_27"
-    name: "Non-residential operative temperature ≤27°C"
+    name: "Above 27 °C at most 25 h per year (BR18 guidance value)"
     metric: "temperature"
     operator: "<="
     target_value: 27.0
     unit: "°C"
     tolerance_hours: 25
     applies_during: "occupied"
-    season: "summer"
+    season: "all_year"  # hours per year of use
     applicable_building_types: ["office", "school", "classroom", "meeting_room", "daycare", "industrial", "retail"]
     source_section: "BR18 vejledning kap. 1.0"
-    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    source_url: "https://www.bygningsreglementet.dk/media/n5hjvonl/termisk-indeklima.pdf"
     description: "Operative temperaturer over 27 °C må højst forekomme i 25 timer pr. år i brugstiden for ikke-beboelsesbygninger."
 
   - id: "br18_res_temp_27"
@@ -62,10 +72,10 @@ rules:
     unit: "°C"
     tolerance_hours: 100
     applies_during: "occupied"
-    season: "summer"
+    season: "all_year"  # hours per year of use
     applicable_building_types: ["residential"]
     source_section: "BR18 vejledning kap. 1.0"
-    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    source_url: "https://www.bygningsreglementet.dk/media/n5hjvonl/termisk-indeklima.pdf"
     description: "Boliger med mulighed for udluftning bør højst have 100 brugstimer pr. år med operative temperaturer over 27 °C."
 
   - id: "br18_res_temp_28"
@@ -76,10 +86,10 @@ rules:
     unit: "°C"
     tolerance_hours: 25
     applies_during: "occupied"
-    season: "summer"
+    season: "all_year"  # hours per year of use
     applicable_building_types: ["residential"]
     source_section: "BR18 vejledning kap. 1.0"
-    source_url: "https://www.bygningsreglementet.dk/historisk/br18_version2/tekniske-bestemmelser/19/vejledninger/termisk-indeklima/kap-1_0/#972e45de-375d-4548-8920-ba91be479238"
+    source_url: "https://www.bygningsreglementet.dk/media/n5hjvonl/termisk-indeklima.pdf"
     description: "Der må højst forekomme 25 brugstimer pr. år over 28 °C i boligens rum, når udluftning er mulig."
 
   # Residential ventilation (BR18 § 443)
@@ -159,16 +169,17 @@ rules:
 
   # Schools, classrooms and day-care (BR18 § 447)
   - id: "br18_school_co2_max"
-    name: "Educational spaces CO2 limit"
+    name: "CO2 in teaching rooms at most 1000 ppm (§ 447, design requirement)"
     metric: "co2"
     operator: "<="
     target_value: 1000
     unit: "ppm"
-    tolerance_percentage: 5
+    tolerance_hours: 0
+    assessment: "indicative"  # design requirement; measured data is an indicator
     applies_during: "occupied"
     applicable_building_types: ["school", "classroom", "meeting_room", "daycare"]
     season: "all_year"
-    source_section: "BR18 § 447, stk. 2"
+    source_section: "BR18 § 447"
     source_url: "https://www.bygningsreglementet.dk/tekniske-bestemmelser/22/krav/447/#dcb71b0d-4d4f-404f-aa62-26950e0c0685"
     description: "Opholdsrum i daginstitutioner og undervisningsrum skal dimensioneres, så CO2-indholdet ikke overstiger 1.000 ppm i de dimensionerende perioder."
 

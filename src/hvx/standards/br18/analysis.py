@@ -59,6 +59,18 @@ def _series_from_timeseries(
     return series.dropna()
 
 
+def _sample_hours(index: pd.Index) -> pd.Series:
+    """Hours each sample stands for: the gap to the next sample, capped at max(3x the median
+    step, 1 h) so data gaps don't count but an hourly sample always counts as its hour
+    (the last sample gets the median step)."""
+    if not isinstance(index, pd.DatetimeIndex) or len(index) < 2:
+        return pd.Series(1.0, index=index)
+    gaps = index.to_series().diff().shift(-1).dt.total_seconds() / 3600.0
+    positive = gaps[gaps > 0]
+    median = float(positive.median()) if not positive.empty else 1.0
+    return gaps.fillna(median).clip(lower=0.0, upper=max(3.0 * median, 1.0))
+
+
 def _estimate_step_hours(index: pd.Index) -> Optional[float]:
     """Best-effort estimate of the sampling step in hours."""
 
@@ -103,14 +115,17 @@ def _evaluate_rule(series: pd.Series, rule_config: Dict[str, Any]) -> Optional[D
     if mask is None or mask.empty:
         return None
 
+    measured = series.notna()
+    mask = mask[measured]
     total_points = len(mask)
     compliant_points = int(mask.sum())
     compliance_rate = (compliant_points / total_points) * 100.0 if total_points else 0.0
 
-    step_hours = _estimate_step_hours(series.index) or 1.0
-    total_hours = total_points * step_hours
-    non_compliant_points = total_points - compliant_points
-    non_compliant_hours = non_compliant_points * step_hours
+    # Hours from each sample's own duration (hourly data must not count four times
+    # because another stretch was logged every 15 minutes).
+    hours = _sample_hours(series.index)[measured]
+    total_hours = float(hours.sum())
+    non_compliant_hours = float(hours[~mask.to_numpy()].sum())
 
     tolerance_hours = float(rule_config.get("tolerance_hours") or 0.0)
     tolerance_pct = rule_config.get("tolerance_percentage")
