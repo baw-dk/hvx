@@ -189,7 +189,7 @@ def highlights(
             line += t(" and above 2000 ppm for {hours} hours", hours=t.num(s.exceedance_hours["co2>2000"], 0))
         out.append(line + ".")
     if "temperature>26" in s.exceedance_hours:
-        out.append(t("Rooms are above 26 °C for {hours} occupied hours on average (BR18 allows 100 h).",
+        out.append(t("Rooms are above 26 °C for {hours} occupied hours on average (BR18 guidance value: 100 h).",
                      hours=t.num(s.exceedance_hours["temperature>26"], 0)))
     scored = [b for b in buildings if b.summary.ieq_score is not None]
     if len(scored) > 1:

@@ -161,7 +161,7 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "Below EN 16798 Category IV ({seasons}); target is Category {target}.":
             "Under EN 16798 kategori IV ({seasons}); målet er kategori {target}.",
         "assessed period": "vurderet periode",
-        "BR18 not met: {rules}.": "BR18 ikke opfyldt: {rules}.",
+
         "{label} within Category {target} limits only {pct} of the time{suffix}.":
             "{label} inden for kategori {target}-grænserne kun {pct} af tiden{suffix}.",
         "mean {value}": "middel {value}",
@@ -169,16 +169,20 @@ CATALOG: Dict[str, Dict[str, str]] = {
         "range {low}–{high}": "interval {low}–{high}",
         "CO₂ above {limit} ppm for {hours} h{share}.": "CO₂ over {limit} ppm i {hours} timer{share}.",
         " ({pct} of occupied time)": " ({pct} af brugstiden)",
-        "Above 26 °C for {hours} h in use (BR18 allows 100 h).": "Over 26 °C i {hours} timer i brugstiden (BR18 tillader 100 timer).",
-        "Above 27 °C for {hours} h in use (BR18 allows 25 h).": "Over 27 °C i {hours} timer i brugstiden (BR18 tillader 25 timer).",
+        "Above 26 °C for {hours} h in use (BR18 guidance value: 100 h).": "Over 26 °C i {hours} timer i brugstiden (vejledende værdi i BR18: 100 timer).",
+        "Above 27 °C for {hours} h in use (BR18 guidance value: 25 h).": "Over 27 °C i {hours} timer i brugstiden (vejledende værdi i BR18: 25 timer).",
         "No sensor data": "Ingen måledata",
         "No usable sensor data": "Ingen brugbare måledata",
         "No data during occupied hours ({hours})": "Ingen data i brugstiden ({hours})",
         "{season}: not enough data in season ({n} samples); skipped.": "{season}: for få data i sæsonen ({n} målinger); udeladt.",
         # BR18 rule names (standards/br18/config.yaml)
-        "Educational spaces CO2 limit": "CO₂-grænse i undervisningsrum (§ 447, stk. 2)",
-        "Non-residential operative temperature ≤26°C": "Operativ temperatur højst 26 °C (højst 100 timer)",
-        "Non-residential operative temperature ≤27°C": "Operativ temperatur højst 27 °C (højst 25 timer)",
+        "CO2 in teaching rooms at most 1000 ppm (§ 447, design requirement)":
+            "CO₂ i undervisningsrum højst 1000 ppm (§ 447, dimensioneringskrav)",
+        "Above 26 °C at most 100 h per year (BR18 guidance value)": "Over 26 °C højst 100 timer om året (vejledende værdi i BR18)",
+        "Above 27 °C at most 25 h per year (BR18 guidance value)": "Over 27 °C højst 25 timer om året (vejledende værdi i BR18)",
+        "<strong>BR18.</strong> Checked once over all assessed hours of the period. The 100 h above 26 °C and 25 h above 27 °C are the BR18 guidance values on thermal indoor climate, which normally satisfy the requirement for offices and are documented by calculation; for schools the building owner sets the hours. § 447 (1000 ppm CO₂ in teaching rooms) is a design requirement. Applied to measured data, both are indicators, not a compliance verdict.":
+            "<strong>BR18.</strong> Vurderes én gang over alle brugstimer i perioden. 100 timer over 26 °C og 25 timer over 27 °C er de vejledende værdier i BR18's vejledning om termisk indeklima, som normalt opfylder kravet for kontorer og dokumenteres ved beregning; for skoler fastsætter bygherren timetallet. § 447 (1000 ppm CO₂ i undervisningsrum) er et dimensioneringskrav. Brugt på målte data er begge indikatorer, ikke en afgørelse om overholdelse.",
+        "BR18 indicators not met: {rules}.": "BR18-indikatorer ikke opfyldt: {rules}.",
         # --- key findings
         "{n} of {total} rooms analysed ({pct} coverage)": "{n} af {total} lokaler analyseret ({pct} dækning)",
         ", {area} m²": ", {area} m²",
@@ -189,8 +193,8 @@ CATALOG: Dict[str, Dict[str, str]] = {
             "{label} er den svageste parameter: lokalerne er i gennemsnit inden for kategori {cat}-grænserne {pct} af tiden.",
         "Rooms are above 1000 ppm CO₂ for {hours} occupied hours on average": "Lokalerne er i gennemsnit over 1000 ppm CO₂ i {hours} timer af brugstiden",
         " and above 2000 ppm for {hours} hours": " og over 2000 ppm i {hours} timer",
-        "Rooms are above 26 °C for {hours} occupied hours on average (BR18 allows 100 h).":
-            "Lokalerne er i gennemsnit over 26 °C i {hours} timer af brugstiden (BR18 tillader 100 timer).",
+        "Rooms are above 26 °C for {hours} occupied hours on average (BR18 guidance value: 100 h).":
+            "Lokalerne er i gennemsnit over 26 °C i {hours} timer af brugstiden (vejledende værdi i BR18: 100 timer).",
         "Lowest-scoring building: {name} (IEQ score {score}).": "Bygningen med lavest score: {name} (indeklimascore {score}).",
         "{n} room(s) could not be assessed ({no_data} without data, {failed} failed).":
             "{n} lokale(r) kunne ikke vurderes ({no_data} uden data, {failed} med fejl).",

@@ -439,6 +439,7 @@
     <li>{{ _("<strong>Compliance %.</strong> Share of samples within Category {cat} limits, per parameter. Parameters below {pct} are listed as issues.", cat=cfg.target_category, pct=(cfg.issue_threshold_pct | pct(0))) | safe }}</li>
     <li>{{ _("<strong>IEQ score.</strong> Weighted mean of parameter compliance ({weights}; weights renormalised over available parameters).", weights=score_weights) | safe }}</li>
     <li>{{ _("<strong>Building and portfolio category.</strong> An hvx summary, not part of EN 16798-1: the best category that at least {pct} of rated rooms reach. Building and portfolio averages are area-weighted when every room has a floor area.", pct=((cfg.group_category_threshold * 100) | pct(0))) | safe }}</li>
+    {% if report.rooms | selectattr("br18_pass", "ne", none) | list %}<li>{{ _("<strong>BR18.</strong> Checked once over all assessed hours of the period. The 100 h above 26 °C and 25 h above 27 °C are the BR18 guidance values on thermal indoor climate, which normally satisfy the requirement for offices and are documented by calculation; for schools the building owner sets the hours. § 447 (1000 ppm CO₂ in teaching rooms) is a design requirement. Applied to measured data, both are indicators, not a compliance verdict.") | safe }}</li>{% endif %}
     {% for note in cfg.notes %}<li>{{ note }}</li>{% endfor %}
     <li>{{ _("<strong>Identifiers.</strong> Brick classes and IFC GlobalIds for every room are in the JSON and CSV exports.") | safe }}</li>
   </ul>
