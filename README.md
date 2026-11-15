@@ -195,13 +195,13 @@ adds a logo, accent colour and company details incl. CVR number (`src/hvx/report
 
 The old `hvx.simulations.models.reporting.HTMLReportService` still works and now delegates to this pipeline.
 
-### 🏷️ TAIL label web app
+### 🏷️ TAIL labels from CSV files (also in the browser)
 
-`web/` is a page that turns one CSV with a year of measurements into a TAIL label and a
-BAW-branded sticker (SVG/PNG), for offices, hotels and schools. It runs `hvx.tail_label`
-from this repository in the browser with Pyodide, so files never leave the visitor's
-machine. Published from `main` by `.github/workflows/web.yml`, meant for
-`https://app.brunoadam.eu/hvx/`; see [web/README.md](web/README.md).
+`hvx.tail_label` rates one CSV with a year of measurements; `hvx.building_csv` takes one CSV
+per room and gives the room and building TAIL labels (`labels()`) and the full report
+(`report()`), over one shared occupancy schedule. Both are light enough to run in the
+browser with [Pyodide](https://pyodide.org), so measurement files need not leave the
+visitor's machine. BAW's TAIL app (https://app.brunoadam.eu/hvx/) is built on them.
 
 ### 🤖 Building reports with an AI assistant (MCP)
 
@@ -348,7 +348,8 @@ script's line numbers.
 - In reports TAIL runs per room on the occupied hours the report selected (no second
   opening-hours filter); buildings and portfolios are rated from their rooms with the profile's rule.
 - **TAIL label from one CSV**: `hvx.tail_label.label_from_csv(text, building_type="school")`
-  (light enough to run in the browser; used by the web app in `web/`).
+  (light enough to run in the browser); for a building, one CSV per room:
+  `hvx.building_csv.labels(rooms, building_type="school")`.
 
 ### 3. Ventilation Simulation Model (`src/hvx/simulations/models/ventilation/model.py`)
 

@@ -17,9 +17,6 @@ All notable changes to this project are documented here. The format follows
   `from_dict`/`to_dict`, `day_groups()`, `weekly_hours()`. `danish_school_holidays(years)`
   gives typical Danish school holidays to start from. `tail_label.assess(schedule=...)` takes
   one; reports describe per-day hours (English and Danish).
-- TAIL web app: several rooms per building with a building label; each label as PNG or SVG,
-  or all as one ZIP; the full report (HTML, open or print as PDF) and an interactive
-  dashboard, both built in the browser; a schedule editor; layout following the BAW website.
 
 ### Changed
 - The rule that rates a group of rooms (`typical_tail`, `interim_label`) moved to
@@ -36,6 +33,11 @@ All notable changes to this project are documented here. The format follows
   - `flow-editor`: TypeScript 6.0 instead of the proposed 7.0. TypeScript 7 has no JavaScript
     compiler API, which the Next.js type check and typescript-eslint need (typescript-eslint
     supports TypeScript < 6.1). `css.d.ts` declares stylesheet imports, which TypeScript 6 checks.
+
+### Removed
+- The TAIL web app (`web/` and its workflow) moved to a separate repository. hvx keeps the
+  parts it is built on, `hvx.tail_label` and `hvx.building_csv`, which run in the browser
+  with Pyodide.
 
 ### Known issues
 - `flow-editor` does not build: `flow-editor/lib/` (`apiClient`, `nodeTypes`, `statisticsUtils`)

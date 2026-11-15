@@ -3,7 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """
 A building from one CSV per room: TAIL labels for each room and for the building, and the
-full hvx indoor-climate report. Used by the TAIL web app (in the browser, with Pyodide).
+full hvx indoor-climate report. The labels need no scipy, so they also run in the browser (Pyodide).
 
 Each room is a dict::
 

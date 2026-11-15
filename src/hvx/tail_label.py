@@ -5,7 +5,7 @@
 TAIL label from one CSV file of measurements (ideally one year, 365 days).
 
 Kept light on purpose (pandas, numpy, pydantic, pyyaml; no scipy) so it also runs in
-the browser with Pyodide: the TAIL label web app (``web/``) calls :func:`label_from_csv`.
+the browser with Pyodide (e.g. a web page that calls :func:`label_from_csv`).
 
 The CSV needs a time column and at least one TAIL parameter. Column names are matched
 loosely (English and Danish): ``timestamp``/``time``/``tid``, ``temperature``/``temperatur``,

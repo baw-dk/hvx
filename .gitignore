@@ -86,6 +86,3 @@ temp/
 # Agent worktrees
 .claude/worktrees/
 
-# web app sources (the Python 'lib/' rule above is for build output)
-!web/src/lib/
-!web/index.html
