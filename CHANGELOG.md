@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
 ### Added
 - `hvx.building_csv`: a building from one CSV per room. `labels()` rates every room and the
   building (offices and hotels: TAIL paper Eq. 1, mean of the rooms' parameter ratings;

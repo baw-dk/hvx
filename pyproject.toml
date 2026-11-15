@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hvx"
-version = "0.4.0"
+version = "0.5.0"
 description = "Indoor environmental quality (IEQ) analytics for buildings: EN 16798-1, TAIL, BR18, live monitoring and IFC/Brick interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
